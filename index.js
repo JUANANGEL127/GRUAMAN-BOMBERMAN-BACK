@@ -24,11 +24,20 @@ await db.query(`
 `);
 
 await db.query(`
+  CREATE TABLE IF NOT EXISTS obras (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL UNIQUE
+  );
+`);
+
+await db.query(`
   CREATE TABLE IF NOT EXISTS trabajadores (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL UNIQUE,
     empresa_id INT,
-    FOREIGN KEY (empresa_id) REFERENCES empresas(id)
+    obra_id INT,
+    FOREIGN KEY (empresa_id) REFERENCES empresas(id),
+    FOREIGN KEY (obra_id) REFERENCES obras(id)
   );
 `);
 
@@ -46,9 +55,9 @@ await db.query(`
 
 // 🔹 POST: guardar entrada/salida con nombre y empresa
 app.post("/registros", async (req, res) => {
-  const { nombre, hora_usuario, tipo, empresa } = req.body;
+  const { nombre, hora_usuario, tipo, empresa, obra } = req.body;
 
-  if (!nombre || !hora_usuario || !tipo || !empresa) {
+  if (!nombre || !hora_usuario || !tipo || !empresa || !obra) {
     return res.status(400).json({ error: "Faltan parámetros obligatorios" });
   }
 
@@ -62,17 +71,33 @@ app.post("/registros", async (req, res) => {
   }
   const empresaId = empresaRows[0].id;
 
+  // Buscar o crear obra
+  let [obraRows] = await db.query(
+    `SELECT id FROM obras WHERE nombre = ?`,
+    [obra]
+  );
+  let obraId;
+  if (obraRows.length === 0) {
+    const [result] = await db.query(
+      `INSERT INTO obras (nombre) VALUES (?)`,
+      [obra]
+    );
+    obraId = result.insertId;
+  } else {
+    obraId = obraRows[0].id;
+  }
+
   // Buscar o crear trabajador
   let [trabajador] = await db.query(
-    `SELECT id, empresa_id FROM trabajadores WHERE nombre = ?`,
+    `SELECT id, empresa_id, obra_id FROM trabajadores WHERE nombre = ?`,
     [nombre]
   );
 
   let trabajadorId;
   if (trabajador.length === 0) {
     const [result] = await db.query(
-      `INSERT INTO trabajadores (nombre, empresa_id) VALUES (?, ?)`,
-      [nombre, empresaId]
+      `INSERT INTO trabajadores (nombre, empresa_id, obra_id) VALUES (?, ?, ?)`,
+      [nombre, empresaId, obraId]
     );
     trabajadorId = result.insertId;
   } else {
@@ -84,6 +109,7 @@ app.post("/registros", async (req, res) => {
         [empresaId, trabajadorId]
       );
     }
+    // No modificar obra_id si el trabajador ya existe
   }
 
   const fecha = moment().tz("America/Bogota").format("YYYY-MM-DD");
@@ -99,6 +125,7 @@ app.post("/registros", async (req, res) => {
     trabajadorId,
     nombre,
     empresa,
+    obra,
     hora_usuario
   });
 });
@@ -107,9 +134,9 @@ app.post("/registros", async (req, res) => {
 app.get("/horas/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
 
-  // Buscar trabajador por nombre y empresa
+  // Buscar trabajador por nombre, empresa y obra
   let [trabajador] = await db.query(
-    `SELECT t.id, e.nombre as empresa FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id WHERE t.nombre = ?`,
+    `SELECT t.id, e.nombre as empresa, o.nombre as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
 
@@ -118,6 +145,7 @@ app.get("/horas/:nombre/:fecha", async (req, res) => {
   }
   const trabajadorId = trabajador[0].id;
   const empresa = trabajador[0].empresa;
+  const obra = trabajador[0].obra;
 
   // Consultar registros (usuario y sistema)
   const [rows] = await db.query(
@@ -133,12 +161,11 @@ app.get("/horas/:nombre/:fecha", async (req, res) => {
   let entradaUsuario = null;
 
   rows.forEach(r => {
-    // Restar una hora a cada registro de hora_usuario
-    const horaUsuarioMenos1 = moment(r.hora_usuario, "HH:mm:ss").subtract(1, "hours");
+    const horaUsuario = moment(r.hora_usuario, "HH:mm:ss");
     if (r.tipo === "entrada") {
-      entradaUsuario = horaUsuarioMenos1;
+      entradaUsuario = horaUsuario;
     } else if (r.tipo === "salida" && entradaUsuario) {
-      totalMinutosUsuario += horaUsuarioMenos1.diff(entradaUsuario, "minutes");
+      totalMinutosUsuario += horaUsuario.diff(entradaUsuario, "minutes");
       entradaUsuario = null;
     }
   });
@@ -148,22 +175,26 @@ app.get("/horas/:nombre/:fecha", async (req, res) => {
   let entradaSistema = null;
 
   rows.forEach(r => {
-    // Restar una hora a cada registro de hora_sistema
-    const horaSistemaMenos1 = moment(r.hora_sistema).tz("America/Bogota").subtract(1, "hours");
+    const horaSistema = moment(r.hora_sistema).tz("America/Bogota");
     if (r.tipo === "entrada") {
-      entradaSistema = horaSistemaMenos1;
+      entradaSistema = horaSistema;
     } else if (r.tipo === "salida" && entradaSistema) {
-      totalMinutosSistema += horaSistemaMenos1.diff(entradaSistema, "minutes");
+      totalMinutosSistema += horaSistema.diff(entradaSistema, "minutes");
       entradaSistema = null;
     }
   });
+
+  // Restar 1 hora al total final
+  const horasUsuarioFinal = Math.max((totalMinutosUsuario / 60) - 1, 0).toFixed(2);
+  const horasSistemaFinal = Math.max((totalMinutosSistema / 60) - 1, 0).toFixed(2);
 
   res.json({
     fecha,
     nombre,
     empresa,
-    horas_usuario: (totalMinutosUsuario / 60).toFixed(2),
-    horas_sistema: (totalMinutosSistema / 60).toFixed(2)
+    obra,
+    horas_usuario: horasUsuarioFinal,
+    horas_sistema: horasSistemaFinal
   });
 });
 
@@ -199,7 +230,7 @@ app.get("/horas-usuario/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
 
   let [trabajador] = await db.query(
-    `SELECT t.id, e.nombre as empresa FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id WHERE t.nombre = ?`,
+    `SELECT t.id, e.nombre as empresa, o.nombre as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
 
@@ -209,6 +240,7 @@ app.get("/horas-usuario/:nombre/:fecha", async (req, res) => {
 
   const trabajadorId = trabajador[0].id;
   const empresa = trabajador[0].empresa;
+  const obra = trabajador[0].obra;
 
   const [rows] = await db.query(
     `SELECT tipo, hora_usuario 
@@ -222,6 +254,7 @@ app.get("/horas-usuario/:nombre/:fecha", async (req, res) => {
     fecha,
     nombre,
     empresa,
+    obra,
     horas_usuario: rows
   });
 });
@@ -231,7 +264,7 @@ app.get("/horas-sistema/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
 
   let [trabajador] = await db.query(
-    `SELECT t.id, e.nombre as empresa FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id WHERE t.nombre = ?`,
+    `SELECT t.id, e.nombre as empresa, o.nombre as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
 
@@ -241,6 +274,7 @@ app.get("/horas-sistema/:nombre/:fecha", async (req, res) => {
 
   const trabajadorId = trabajador[0].id;
   const empresa = trabajador[0].empresa;
+  const obra = trabajador[0].obra;
 
   const [rows] = await db.query(
     `SELECT tipo, hora_sistema 
@@ -260,6 +294,7 @@ app.get("/horas-sistema/:nombre/:fecha", async (req, res) => {
     fecha,
     nombre,
     empresa,
+    obra,
     horas_sistema
   });
 });
@@ -269,7 +304,7 @@ app.get("/horas-extras/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
 
   let [trabajador] = await db.query(
-    `SELECT t.id, e.nombre as empresa FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id WHERE t.nombre = ?`,
+    `SELECT t.id, e.nombre as empresa, o.nombre as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
 
@@ -278,6 +313,7 @@ app.get("/horas-extras/:nombre/:fecha", async (req, res) => {
   }
   const trabajadorId = trabajador[0].id;
   const empresa = trabajador[0].empresa;
+  const obra = trabajador[0].obra;
 
   // Consultar registros (usuario y sistema)
   const [rows] = await db.query(
@@ -293,11 +329,11 @@ app.get("/horas-extras/:nombre/:fecha", async (req, res) => {
   let entradaUsuario = null;
 
   rows.forEach(r => {
-    const horaUsuarioMenos1 = moment(r.hora_usuario, "HH:mm:ss").subtract(1, "hours");
+    const horaUsuario = moment(r.hora_usuario, "HH:mm:ss");
     if (r.tipo === "entrada") {
-      entradaUsuario = horaUsuarioMenos1;
+      entradaUsuario = horaUsuario;
     } else if (r.tipo === "salida" && entradaUsuario) {
-      totalMinutosUsuario += horaUsuarioMenos1.diff(entradaUsuario, "minutes");
+      totalMinutosUsuario += horaUsuario.diff(entradaUsuario, "minutes");
       entradaUsuario = null;
     }
   });
@@ -307,26 +343,107 @@ app.get("/horas-extras/:nombre/:fecha", async (req, res) => {
   let entradaSistema = null;
 
   rows.forEach(r => {
-    const horaSistemaMenos1 = moment(r.hora_sistema).tz("America/Bogota").subtract(1, "hours");
+    const horaSistema = moment(r.hora_sistema).tz("America/Bogota");
     if (r.tipo === "entrada") {
-      entradaSistema = horaSistemaMenos1;
+      entradaSistema = horaSistema;
     } else if (r.tipo === "salida" && entradaSistema) {
-      totalMinutosSistema += horaSistemaMenos1.diff(entradaSistema, "minutes");
+      totalMinutosSistema += horaSistema.diff(entradaSistema, "minutes");
       entradaSistema = null;
     }
   });
 
+  // Restar 1 hora al total final
+  const horasUsuarioFinal = Math.max((totalMinutosUsuario / 60) - 1, 0);
+  const horasSistemaFinal = Math.max((totalMinutosSistema / 60) - 1, 0);
+
   // Calcular horas extras (restar 9 horas, no mostrar negativos)
-  const horasExtrasUsuario = Math.max((totalMinutosUsuario / 60) - 9, 0).toFixed(2);
-  const horasExtrasSistema = Math.max((totalMinutosSistema / 60) - 9, 0).toFixed(2);
+  const horasExtrasUsuario = Math.max(horasUsuarioFinal - 8, 0).toFixed(2);
+  const horasExtrasSistema = Math.max(horasSistemaFinal - 8, 0).toFixed(2);
 
   res.json({
     fecha,
     nombre,
     empresa,
+    obra,
     horas_extras_usuario: horasExtrasUsuario,
     horas_extras_sistema: horasExtrasSistema
   });
+});
+
+// 🔹 GET: resumen de todos los registros
+app.get("/registros-todos-resumen", async (req, res) => {
+  // Obtener todos los trabajadores con empresa y obra
+  const [trabajadores] = await db.query(
+    `SELECT t.id, t.nombre, e.nombre as empresa, o.nombre as obra FROM trabajadores t
+     LEFT JOIN empresas e ON t.empresa_id = e.id
+     LEFT JOIN obras o ON t.obra_id = o.id`
+  );
+
+  const resumen = [];
+
+  for (const trabajador of trabajadores) {
+    // Obtener todas las fechas con registros para este trabajador
+    const [fechas] = await db.query(
+      `SELECT DISTINCT fecha FROM registros_horas WHERE trabajador_id = ? ORDER BY fecha`,
+      [trabajador.id]
+    );
+
+    for (const f of fechas) {
+      const fecha = f.fecha;
+      // Obtener todos los registros de este trabajador en esa fecha
+      const [registros] = await db.query(
+        `SELECT tipo, hora_usuario, hora_sistema FROM registros_horas WHERE trabajador_id = ? AND fecha = ? ORDER BY hora_sistema`,
+        [trabajador.id, fecha]
+      );
+
+      // Calcular horas trabajadas usuario
+      let totalMinutosUsuario = 0;
+      let entradaUsuario = null;
+      registros.forEach(r => {
+        const horaUsuario = moment(r.hora_usuario, "HH:mm:ss");
+        if (r.tipo === "entrada") {
+          entradaUsuario = horaUsuario;
+        } else if (r.tipo === "salida" && entradaUsuario) {
+          totalMinutosUsuario += horaUsuario.diff(entradaUsuario, "minutes");
+          entradaUsuario = null;
+        }
+      });
+
+      // Calcular horas trabajadas sistema
+      let totalMinutosSistema = 0;
+      let entradaSistema = null;
+      registros.forEach(r => {
+        const horaSistema = moment(r.hora_sistema).tz("America/Bogota");
+        if (r.tipo === "entrada") {
+          entradaSistema = horaSistema;
+        } else if (r.tipo === "salida" && entradaSistema) {
+          totalMinutosSistema += horaSistema.diff(entradaSistema, "minutes");
+          entradaSistema = null;
+        }
+      });
+
+      // Restar 1 hora al total final
+      const horasUsuarioFinal = Math.max((totalMinutosUsuario / 60) - 1, 0);
+      const horasSistemaFinal = Math.max((totalMinutosSistema / 60) - 1, 0);
+
+      // Calcular horas extras (restar 9 horas, no mostrar negativos)
+      const horasExtrasUsuario = Math.max(horasUsuarioFinal - 9, 0).toFixed(2);
+      const horasExtrasSistema = Math.max(horasSistemaFinal - 9, 0).toFixed(2);
+
+      resumen.push({
+        nombre: trabajador.nombre,
+        empresa: trabajador.empresa,
+        obra: trabajador.obra,
+        fecha,
+        horas_usuario: horasUsuarioFinal.toFixed(2),
+        horas_sistema: horasSistemaFinal.toFixed(2),
+        horas_extras_usuario: horasExtrasUsuario,
+        horas_extras_sistema: horasExtrasSistema
+      });
+    }
+  }
+
+  res.json(resumen);
 });
 
 app.listen(3000, () =>
