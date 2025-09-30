@@ -90,7 +90,7 @@ router.post("/registros", async (req, res) => {
 router.get("/horas/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
-    `SELECT t.id, t.nombre, t.numero_identificacion, e.nombre as empresa, o.nombre as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
+    `SELECT t.id, t.nombre, t.numero_identificacion, e.nombre as empresa, o.nombreObra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
   if (trabajador.length === 0) {
@@ -167,7 +167,7 @@ router.get("/registros/:nombre/:fecha", async (req, res) => {
 router.get("/horas-usuario/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
-    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombre as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
+    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombreObra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
   if (trabajador.length === 0) {
@@ -195,7 +195,7 @@ router.get("/horas-usuario/:nombre/:fecha", async (req, res) => {
 router.get("/horas-sistema/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
-    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombre as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
+    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombreObra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
   if (trabajador.length === 0) {
@@ -227,7 +227,7 @@ router.get("/horas-sistema/:nombre/:fecha", async (req, res) => {
 router.get("/horas-extras/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
-    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombre as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
+    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombreObra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
   if (trabajador.length === 0) {
@@ -281,7 +281,7 @@ router.get("/horas-extras/:nombre/:fecha", async (req, res) => {
 // GET: resumen de todos los registros
 router.get("/registros-todos-resumen", async (req, res) => {
   const [trabajadores] = await db.query(
-    `SELECT t.id, t.nombre, t.numero_identificacion, e.nombre as empresa, o.nombre as obra FROM trabajadores t
+    `SELECT t.id, t.nombre, t.numero_identificacion, e.nombre as empresa, o.nombreObra as obra FROM trabajadores t
      LEFT JOIN empresas e ON t.empresa_id = e.id
      LEFT JOIN obras o ON t.obra_id = o.id`
   );

@@ -2,10 +2,13 @@ import express from "express";
 import cors from "cors";
 import mysql from "mysql2/promise";
 import formulario1Router from "./routes/gruaman/formulario1.js";
+import administradorRouter from "./routes/administrador.js"; // <-- Nuevo import
+import planillaBombeoRouter from "./routes/bomberman/planillabombeo.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use("/bomberman/planillabombeo", planillaBombeoRouter);
 
 // Conexión a MySQL
 let db;
@@ -16,6 +19,8 @@ let db;
     password: "daleolamse2004",
     database: "obra_db"
   });
+
+  global.db = db; // <--- Asegura que global.db esté disponible para los routers
 
   // Crear tablas si no existen
   await db.query(`
@@ -61,41 +66,12 @@ app.get("/nombres-trabajadores", async (req, res) => {
 
 // Endpoint para recibir los datos básicos
 app.post("/datos-basicos", async (req, res) => {
-  const { nombre, empresa, obra, numero_identificacion } = req.body;
-  // Ahora 'nombre' debe venir del front como selección, no como dato ingresado manualmente
-  if (!nombre || !empresa || !obra || !numero_identificacion) {
+  const { nombre, empresa, empresa_id, obra_id, numero_identificacion } = req.body;
+  // Validar parámetros obligatorios
+  if (!nombre || !empresa || !empresa_id || !obra_id || !numero_identificacion) {
     return res.status(400).json({ error: "Faltan parámetros obligatorios" });
   }
-  // Buscar o crear empresa
-  let [empresaRows] = await db.query(
-    `SELECT id FROM empresas WHERE nombre = ?`,
-    [empresa]
-  );
-  let empresaId;
-  if (empresaRows.length === 0) {
-    const [result] = await db.query(
-      `INSERT INTO empresas (nombre) VALUES (?)`,
-      [empresa]
-    );
-    empresaId = result.insertId;
-  } else {
-    empresaId = empresaRows[0].id;
-  }
-  // Buscar o crear obra
-  let [obraRows] = await db.query(
-    `SELECT id FROM obras WHERE nombreObra = ?`,
-    [obra]
-  );
-  let obraId;
-  if (obraRows.length === 0) {
-    const [result] = await db.query(
-      `INSERT INTO obras (nombreObra) VALUES (?)`,
-      [obra]
-    );
-    obraId = result.insertId;
-  } else {
-    obraId = obraRows[0].id;
-  }
+
   // Buscar o crear trabajador
   let [trabajador] = await db.query(
     `SELECT id, empresa_id, obra_id, numero_identificacion FROM trabajadores WHERE nombre = ?`,
@@ -105,16 +81,22 @@ app.post("/datos-basicos", async (req, res) => {
   if (trabajador.length === 0) {
     const [result] = await db.query(
       `INSERT INTO trabajadores (nombre, empresa_id, obra_id, numero_identificacion) VALUES (?, ?, ?, ?)`,
-      [nombre, empresaId, obraId, numero_identificacion]
+      [nombre, empresa_id, obra_id, numero_identificacion]
     );
     trabajadorId = result.insertId;
   } else {
     trabajadorId = trabajador[0].id;
-    // Actualizar empresa_id y numero_identificacion solo si cambió
-    if (trabajador[0].empresa_id !== empresaId) {
+    // Actualizar empresa_id, obra_id y numero_identificacion si cambiaron
+    if (trabajador[0].empresa_id !== empresa_id) {
       await db.query(
         `UPDATE trabajadores SET empresa_id = ? WHERE id = ?`,
-        [empresaId, trabajadorId]
+        [empresa_id, trabajadorId]
+      );
+    }
+    if (trabajador[0].obra_id !== obra_id) {
+      await db.query(
+        `UPDATE trabajadores SET obra_id = ? WHERE id = ?`,
+        [obra_id, trabajadorId]
       );
     }
     if (trabajador[0].numero_identificacion !== numero_identificacion) {
@@ -123,14 +105,14 @@ app.post("/datos-basicos", async (req, res) => {
         [numero_identificacion, trabajadorId]
       );
     }
-    // No modificar obra_id si el trabajador ya existe
   }
   res.json({
     message: "Datos básicos guardados",
     trabajadorId,
     nombre,
     empresa,
-    obra,
+    empresa_id,
+    obra_id,
     numero_identificacion
   });
 });
@@ -229,6 +211,9 @@ function deg2rad(deg) {
 
 // Montar el router del formulario 1
 app.use("/formulario1", formulario1Router);
+
+// Montar el router de administrador
+app.use("/administrador", administradorRouter);
 
 // Aquí puedes agregar más formularios en el futuro
 // app.use("/formulario2", formulario2Router);
