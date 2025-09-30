@@ -67,10 +67,13 @@ app.get("/nombres-trabajadores", async (req, res) => {
 // Endpoint para recibir los datos básicos
 app.post("/datos-basicos", async (req, res) => {
   const { nombre, empresa, empresa_id, obra_id, numero_identificacion } = req.body;
-  // Validar parámetros obligatorios
-  if (!nombre || !empresa || !empresa_id || !obra_id || !numero_identificacion) {
-    return res.status(400).json({ error: "Faltan parámetros obligatorios" });
-  }
+
+  // Validar parámetros obligatorios y mostrar cuál falta
+  if (!nombre) return res.status(400).json({ error: "Falta parámetro: nombre" });
+  if (!empresa) return res.status(400).json({ error: "Falta parámetro: empresa" });
+  if (!empresa_id) return res.status(400).json({ error: "Falta parámetro: empresa_id" });
+  if (!obra_id) return res.status(400).json({ error: "Falta parámetro: obra_id" });
+  if (!numero_identificacion) return res.status(400).json({ error: "Falta parámetro: numero_identificacion" });
 
   // Buscar o crear trabajador
   let [trabajador] = await db.query(
@@ -134,11 +137,11 @@ app.get("/trabajador-id", async (req, res) => {
     return res.status(404).json({ error: "Empresa u obra no encontrada" });
   }
   const empresaId = empresaRows[0].id;
-  const obraId = obraRows[0].id;
+  const obra_id = obraRows[0].id;
   // Buscar trabajador
   let [trabajador] = await db.query(
     `SELECT id, nombre, empresa_id, obra_id, numero_identificacion FROM trabajadores WHERE nombre = ? AND empresa_id = ? AND obra_id = ? AND numero_identificacion = ?`,
-    [nombre, empresaId, obraId, numero_identificacion]
+    [nombre, empresaId, obra_id, numero_identificacion]
   );
   if (trabajador.length === 0) {
     return res.status(404).json({ error: "Trabajador no encontrado" });
@@ -148,7 +151,7 @@ app.get("/trabajador-id", async (req, res) => {
     `SELECT nombre FROM empresas WHERE id = ?`, [empresaId]
   );
   let [obraObj] = await db.query(
-    `SELECT nombreObra FROM obras WHERE id = ?`, [obraId]
+    `SELECT nombreObra FROM obras WHERE id = ?`, [obra_id]
   );
   res.json({
     trabajadorId: trabajador[0].id,
@@ -221,4 +224,3 @@ app.use("/administrador", administradorRouter);
 app.listen(3000, () =>
   console.log("API corriendo en http://localhost:3000")
 );
-
