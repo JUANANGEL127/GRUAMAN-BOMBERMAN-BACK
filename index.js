@@ -4,6 +4,7 @@ import pkg from "pg";
 import formulario1Router from "./routes/gruaman/formulario1.js";
 import administradorRouter from "./routes/administrador.js";
 import planillaBombeoRouter from "./routes/bomberman/planillabombeo.js";
+import checklistRouter from "./routes/bomberman/checklist.js"; // <-- importar el router
 
 const { Pool } = pkg;
 const app = express();
@@ -11,6 +12,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use("/bomberman/planilla_bombeo", planillaBombeoRouter);
+app.use("/bomberman/checklist", checklistRouter); // <-- montar el router
 
 // Conexión a PostgreSQL
 const pool = new Pool({
