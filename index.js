@@ -10,7 +10,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
-app.use("/bomberman/planillabombeo", planillaBombeoRouter);
+app.use("/bomberman/planilla_bombeo", planillaBombeoRouter);
 
 // Conexión a PostgreSQL
 const pool = new Pool({
@@ -35,7 +35,7 @@ global.db = pool;
   await pool.query(`
     CREATE TABLE IF NOT EXISTS obras (
       id SERIAL PRIMARY KEY,
-      nombreObra VARCHAR(150) UNIQUE NOT NULL,
+      nombre_obra VARCHAR(150) UNIQUE NOT NULL,
       latitud DECIMAL(10,6) NOT NULL,
       longitud DECIMAL(10,6) NOT NULL
     );
@@ -65,7 +65,7 @@ global.db = pool;
   `);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS planillaBombeo (
+    CREATE TABLE IF NOT EXISTS planilla_bombeo (
       id SERIAL PRIMARY KEY,
       nombre_cliente VARCHAR(100) NOT NULL,
       nombre_proyecto VARCHAR(150) NOT NULL,
@@ -73,19 +73,25 @@ global.db = pool;
       bomba_numero VARCHAR(20) NOT NULL,
       hora_llegada_obra TIME NOT NULL,
       hora_salida_obra TIME NOT NULL,
-      hora_inicio_acpm TIME NOT NULL,
-      hora_final_acpm TIME NOT NULL,
+      hora_inicio_acpm NUMERIC NOT NULL,
+      hora_final_acpm NUMERIC NOT NULL,
       horometro_inicial DECIMAL(10,2) NOT NULL,
       horometro_final DECIMAL(10,2) NOT NULL,
       nombre_operador VARCHAR(100) NOT NULL,
       nombre_auxiliar VARCHAR(100),
-      total_metros_cubicos_bombeados DECIMAL(10,2) NOT NULL
+      total_metros_cubicos_bombeados DECIMAL(10,2) NOT NULL,
+      remision VARCHAR(100),
+      hora_llegada TIME,
+      hora_inicial TIME,
+      hora_final TIME,
+      metros DECIMAL(10,2),
+      observaciones TEXT
     );
   `);
 })();
 
-// 🔹 Endpoint: obtener nombres de trabajadores
-app.get("/nombres-trabajadores", async (req, res) => {
+// Endpoint: obtener nombres de trabajadores
+app.get("/nombres_trabajadores", async (req, res) => {
   try {
     const result = await pool.query(`SELECT nombre FROM trabajadores`);
     const nombres = result.rows.map(row => row.nombre);
@@ -96,8 +102,8 @@ app.get("/nombres-trabajadores", async (req, res) => {
   }
 });
 
-// 🔹 Endpoint: guardar datos básicos
-app.post("/datos-basicos", async (req, res) => {
+// Endpoint: guardar datos básicos
+app.post("/datos_basicos", async (req, res) => {
   const { nombre, empresa, empresa_id, obra_id, numero_identificacion } = req.body;
 
   if (!nombre) return res.status(400).json({ error: "Falta parámetro: nombre" });
@@ -146,15 +152,15 @@ app.post("/datos-basicos", async (req, res) => {
   }
 });
 
-// 🔹 Endpoint: obtener trabajadorId
-app.get("/trabajador-id", async (req, res) => {
+// Endpoint: obtener trabajadorId
+app.get("/trabajador_id", async (req, res) => {
   const { nombre, empresa, obra, numero_identificacion } = req.query;
   if (!nombre || !empresa || !obra || !numero_identificacion) {
     return res.status(400).json({ error: "Faltan parámetros obligatorios" });
   }
   try {
     const empresaRows = await pool.query(`SELECT id FROM empresas WHERE nombre = $1`, [empresa]);
-    const obraRows = await pool.query(`SELECT id FROM obras WHERE nombreObra = $1`, [obra]);
+    const obraRows = await pool.query(`SELECT id FROM obras WHERE nombre_obra = $1`, [obra]);
 
     if (empresaRows.rows.length === 0 || obraRows.rows.length === 0)
       return res.status(404).json({ error: "Empresa u obra no encontrada" });
@@ -172,13 +178,13 @@ app.get("/trabajador-id", async (req, res) => {
       return res.status(404).json({ error: "Trabajador no encontrado" });
 
     const empresaObj = await pool.query(`SELECT nombre FROM empresas WHERE id = $1`, [empresa_id]);
-    const obraObj = await pool.query(`SELECT nombreObra FROM obras WHERE id = $1`, [obra_id]);
+    const obraObj = await pool.query(`SELECT nombre_obra FROM obras WHERE id = $1`, [obra_id]);
 
     res.json({
       trabajadorId: trabajador.rows[0].id,
       nombre: trabajador.rows[0].nombre,
       empresa: empresaObj.rows[0]?.nombre || empresa,
-      obra: obraObj.rows[0]?.nombreObra || obra,
+      obra: obraObj.rows[0]?.nombre_obra || obra,
       numero_identificacion: trabajador.rows[0].numero_identificacion,
     });
   } catch (error) {
@@ -187,10 +193,10 @@ app.get("/trabajador-id", async (req, res) => {
   }
 });
 
-// 🔹 Endpoint: obtener obras
+// Endpoint: obtener obras
 app.get("/obras", async (req, res) => {
   try {
-    const result = await pool.query(`SELECT id, nombreObra FROM obras`);
+    const result = await pool.query(`SELECT id, nombre_obra, constructora FROM obras`);
     res.json({ obras: result.rows });
   } catch (error) {
     console.error(error);
@@ -198,8 +204,19 @@ app.get("/obras", async (req, res) => {
   }
 });
 
-// 🔹 Validar ubicación (misma lógica)
-app.post("/validar-ubicacion", async (req, res) => {
+// Endpoint: obtener los números de bomba
+app.get("/bombas", async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT numero_bomba FROM bombas`);
+    res.json({ bombas: result.rows });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error al obtener los números de bomba" });
+  }
+});
+
+// Validar ubicación
+app.post("/validar_ubicacion", async (req, res) => {
   const { obra_id, lat, lon } = req.body;
   if (!obra_id || typeof lat !== "number" || typeof lon !== "number") {
     return res.status(400).json({ ok: false, message: "Parámetros inválidos" });
@@ -222,7 +239,7 @@ app.post("/validar-ubicacion", async (req, res) => {
   }
 });
 
-// 🔹 Función Haversine
+// Función Haversine
 function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const dLat = deg2rad(lat2 - lat1);
@@ -239,7 +256,7 @@ function deg2rad(deg) {
   return deg * (Math.PI / 180);
 }
 
-// 🔹 Montar routers
+// Montar routers
 app.use("/formulario1", formulario1Router);
 app.use("/administrador", administradorRouter);
 

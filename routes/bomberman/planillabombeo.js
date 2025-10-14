@@ -38,13 +38,15 @@ router.post("/", async (req, res) => {
     bomba_numero,
     hora_llegada_obra,
     hora_salida_obra,
-    hora_inicio_acpm, // ahora numérico
-    hora_final_acpm,  // ahora numérico
+    galones_inicio_acpm,
+    galones_final_acpm,
+    galones_pinpina, // <-- nuevo campo
     horometro_inicial,
     horometro_final,
     nombre_operador,
     nombre_auxiliar,
-    total_metros_cubicos_bombeados
+    total_metros_cubicos_bombeados,
+    remisiones // <-- ahora se espera un array de remisiones
   } = req.body;
 
   // Formatear solo los campos TIME correctos
@@ -55,18 +57,22 @@ router.post("/", async (req, res) => {
   if (
     !nombre_cliente || !nombre_proyecto || !fecha_servicio || !bomba_numero ||
     !hora_llegada_obra || !hora_salida_obra ||
-    hora_inicio_acpm == null || hora_final_acpm == null ||
+    galones_inicio_acpm == null || galones_final_acpm == null ||
+    galones_pinpina == null || // <-- validación nuevo campo
     horometro_inicial == null || horometro_final == null ||
-    !nombre_operador || !nombre_auxiliar || total_metros_cubicos_bombeados == null
+    !nombre_operador || !nombre_auxiliar || total_metros_cubicos_bombeados == null ||
+    !Array.isArray(remisiones) || remisiones.length === 0
   ) {
-    return res.status(400).json({ error: "Faltan parámetros obligatorios" });
+    return res.status(400).json({ error: "Faltan parámetros obligatorios o remisiones no es un array válido" });
   }
 
   try {
-    await db.query(
-      `INSERT INTO planillaBombeo 
-        (nombre_cliente, nombre_proyecto, fecha_servicio, bomba_numero, hora_llegada_obra, hora_salida_obra, hora_inicio_acpm, hora_final_acpm, horometro_inicial, horometro_final, nombre_operador, nombre_auxiliar, total_metros_cubicos_bombeados)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+    // 1. Insertar la planilla de bombeo
+    const result = await db.query(
+      `INSERT INTO planilla_bombeo 
+        (nombre_cliente, nombre_proyecto, fecha_servicio, bomba_numero, hora_llegada_obra, hora_salida_obra, galones_inicio_acpm, galones_final_acpm, galones_pinpina, horometro_inicial, horometro_final, nombre_operador, nombre_auxiliar, total_metros_cubicos_bombeados)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       RETURNING id`,
       [
         nombre_cliente,
         nombre_proyecto,
@@ -74,8 +80,9 @@ router.post("/", async (req, res) => {
         bomba_numero,
         hora_llegada_obra,
         hora_salida_obra,
-        hora_inicio_acpm,
-        hora_final_acpm,
+        galones_inicio_acpm,
+        galones_final_acpm,
+        galones_pinpina, // <-- nuevo campo
         horometro_inicial,
         horometro_final,
         nombre_operador,
@@ -83,7 +90,50 @@ router.post("/", async (req, res) => {
         total_metros_cubicos_bombeados
       ]
     );
-    res.json({ message: "Registro guardado correctamente" });
+    const planillaId = result.rows[0].id;
+
+    // 2. Insertar cada remisión asociada
+    for (const rem of remisiones) {
+      const {
+        remision,
+        hora_llegada,
+        hora_inicial,
+        hora_final,
+        metros,
+        observaciones,
+        manguera // <-- nuevo campo
+      } = rem;
+
+      // Formatear los campos TIME de la remisión
+      const hora_llegada_fmt = formatTime(hora_llegada);
+      const hora_inicial_fmt = formatTime(hora_inicial);
+      const hora_final_fmt = formatTime(hora_final);
+
+      // Validar campos de la remisión
+      if (
+        !remision || !hora_llegada || !hora_inicial || !hora_final || metros == null || !manguera 
+      ) {
+        return res.status(400).json({ error: "Faltan campos obligatorios en una remisión" });
+      }
+
+      await db.query(
+        `INSERT INTO remisiones 
+          (planilla_bombeo_id, remision, hora_llegada, hora_inicial, hora_final, metros, observaciones, manguera)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          planillaId,
+          remision,
+          hora_llegada_fmt,
+          hora_inicial_fmt,
+          hora_final_fmt,
+          metros,
+          observaciones ?? "",
+          manguera
+        ]
+      );
+    }
+
+    res.json({ message: "Registro guardado correctamente", planilla_bombeo_id: planillaId });
   } catch (error) {
     console.error("Error al guardar el registro:", error);
     res.status(500).json({ error: "Error al guardar el registro", detalle: error.message, sql: error.position ? error : undefined });
@@ -98,8 +148,26 @@ router.get("/", async (req, res) => {
     return res.status(500).json({ error: "DB no disponible" });
   }
   try {
-    const result = await db.query(`SELECT * FROM planillaBombeo`);
-    res.json({ registros: result.rows });
+    // Obtener todas las planillas
+    const result = await db.query(`SELECT * FROM planilla_bombeo`);
+    const planillas = result.rows;
+
+    // Obtener todas las remisiones asociadas, incluyendo manguera
+    const remisionesResult = await db.query(`SELECT * FROM remisiones`);
+    const remisiones = remisionesResult.rows;
+
+    // Asociar remisiones a cada planilla
+    const planillasConRemisiones = planillas.map(planilla => ({
+      ...planilla,
+      remisiones: remisiones
+        .filter(r => r.planilla_bombeo_id === planilla.id)
+        .map(r => ({
+          ...r,
+          manguera: r.manguera // asegúrate que el campo esté presente
+        }))
+    }));
+
+    res.json({ registros: planillasConRemisiones });
   } catch (error) {
     res.status(500).json({ error: "Error al obtener los registros", detalle: error.message });
   }

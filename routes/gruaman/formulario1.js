@@ -25,7 +25,7 @@ let db;
   await db.query(`
     CREATE TABLE IF NOT EXISTS obras (
       id INT AUTO_INCREMENT PRIMARY KEY,
-      nombre VARCHAR(100) NOT NULL UNIQUE
+      nombre_obra VARCHAR(100) NOT NULL UNIQUE
     );
   `);
 
@@ -35,6 +35,7 @@ let db;
       nombre VARCHAR(100) NOT NULL UNIQUE,
       empresa_id INT,
       obra_id INT,
+      numero_identificacion VARCHAR(50) UNIQUE,
       FOREIGN KEY (empresa_id) REFERENCES empresas(id),
       FOREIGN KEY (obra_id) REFERENCES obras(id)
     );
@@ -55,16 +56,16 @@ let db;
 
 // POST: procesar solo los datos del formulario1
 router.post("/registros", async (req, res) => {
-  const { trabajadorId, hora_usuario, tipo } = req.body;
+  const { trabajador_id, hora_usuario, tipo } = req.body;
 
-  if (!trabajadorId || !hora_usuario || !tipo) {
+  if (!trabajador_id || !hora_usuario || !tipo) {
     return res.status(400).json({ error: "Faltan parámetros obligatorios" });
   }
 
   // Buscar trabajador
   let [trabajador] = await db.query(
     `SELECT id FROM trabajadores WHERE id = ?`,
-    [trabajadorId]
+    [trabajador_id]
   );
   if (trabajador.length === 0) {
     return res.status(404).json({ error: "Trabajador no encontrado" });
@@ -75,12 +76,12 @@ router.post("/registros", async (req, res) => {
   await db.query(
     `INSERT INTO registros_horas (trabajador_id, fecha, hora_usuario, tipo)
      VALUES (?, ?, ?, ?)`,
-    [trabajadorId, fecha, hora_usuario, tipo]
+    [trabajador_id, fecha, hora_usuario, tipo]
   );
 
   res.json({
     message: "Registro guardado",
-    trabajadorId,
+    trabajador_id,
     hora_usuario,
     tipo
   });
@@ -90,19 +91,19 @@ router.post("/registros", async (req, res) => {
 router.get("/horas/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
-    `SELECT t.id, t.nombre, t.numero_identificacion, e.nombre as empresa, o.nombreObra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
+    `SELECT t.id, t.nombre, t.numero_identificacion, e.nombre as empresa, o.nombre_obra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
   if (trabajador.length === 0) {
     return res.status(404).json({ error: "Trabajador no encontrado" });
   }
-  const trabajadorId = trabajador[0].id;
+  const trabajador_id = trabajador[0].id;
   const empresa = trabajador[0].empresa;
   const obra = trabajador[0].obra;
   const numero_identificacion = trabajador[0].numero_identificacion;
   const [rows] = await db.query(
     `SELECT tipo, hora_usuario, hora_sistema FROM registros_horas WHERE trabajador_id = ? AND fecha = ? ORDER BY hora_sistema`,
-    [trabajadorId, fecha]
+    [trabajador_id, fecha]
   );
   let totalMinutosUsuario = 0;
   let entradaUsuario = null;
@@ -126,16 +127,16 @@ router.get("/horas/:nombre/:fecha", async (req, res) => {
       entradaSistema = null;
     }
   });
-  const horasUsuarioFinal = Math.max((totalMinutosUsuario / 60) - 1, 0).toFixed(2);
-  const horasSistemaFinal = Math.max((totalMinutosSistema / 60) - 1, 0).toFixed(2);
+  const horas_usuario_final = Math.max((totalMinutosUsuario / 60) - 1, 0).toFixed(2);
+  const horas_sistema_final = Math.max((totalMinutosSistema / 60) - 1, 0).toFixed(2);
   res.json({
     fecha,
     nombre,
     empresa,
     obra,
     numero_identificacion,
-    horas_usuario: horasUsuarioFinal,
-    horas_sistema: horasSistemaFinal
+    horas_usuario: horas_usuario_final,
+    horas_sistema: horas_sistema_final
   });
 });
 
@@ -149,12 +150,12 @@ router.get("/registros/:nombre/:fecha", async (req, res) => {
   if (trabajador.length === 0) {
     return res.status(404).json({ error: "Trabajador no encontrado" });
   }
-  const trabajadorId = trabajador[0].id;
+  const trabajador_id = trabajador[0].id;
   const empresa = trabajador[0].empresa;
   const numero_identificacion = trabajador[0].numero_identificacion;
   const [rows] = await db.query(
     `SELECT * FROM registros_horas WHERE trabajador_id = ? AND fecha = ?`,
-    [trabajadorId, fecha]
+    [trabajador_id, fecha]
   );
   res.json({
     empresa,
@@ -167,19 +168,19 @@ router.get("/registros/:nombre/:fecha", async (req, res) => {
 router.get("/horas-usuario/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
-    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombreObra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
+    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombre_obra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
   if (trabajador.length === 0) {
     return res.status(404).json({ error: "Trabajador no encontrado" });
   }
-  const trabajadorId = trabajador[0].id;
+  const trabajador_id = trabajador[0].id;
   const empresa = trabajador[0].empresa;
   const obra = trabajador[0].obra;
   const numero_identificacion = trabajador[0].numero_identificacion;
   const [rows] = await db.query(
     `SELECT tipo, hora_usuario FROM registros_horas WHERE trabajador_id = ? AND fecha = ? ORDER BY hora_usuario`,
-    [trabajadorId, fecha]
+    [trabajador_id, fecha]
   );
   res.json({
     fecha,
@@ -195,19 +196,19 @@ router.get("/horas-usuario/:nombre/:fecha", async (req, res) => {
 router.get("/horas-sistema/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
-    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombreObra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
+    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombre_obra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
   if (trabajador.length === 0) {
     return res.status(404).json({ error: "Trabajador no encontrado" });
   }
-  const trabajadorId = trabajador[0].id;
+  const trabajador_id = trabajador[0].id;
   const empresa = trabajador[0].empresa;
   const obra = trabajador[0].obra;
   const numero_identificacion = trabajador[0].numero_identificacion;
   const [rows] = await db.query(
     `SELECT tipo, hora_sistema FROM registros_horas WHERE trabajador_id = ? AND fecha = ? ORDER BY hora_sistema`,
-    [trabajadorId, fecha]
+    [trabajador_id, fecha]
   );
   const horas_sistema = rows.map(r => ({
     tipo: r.tipo,
@@ -227,19 +228,19 @@ router.get("/horas-sistema/:nombre/:fecha", async (req, res) => {
 router.get("/horas-extras/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
-    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombreObra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
+    `SELECT t.id, t.numero_identificacion, e.nombre as empresa, o.nombre_obra as obra FROM trabajadores t LEFT JOIN empresas e ON t.empresa_id = e.id LEFT JOIN obras o ON t.obra_id = o.id WHERE t.nombre = ?`,
     [nombre]
   );
   if (trabajador.length === 0) {
     return res.status(404).json({ error: "Trabajador no encontrado" });
   }
-  const trabajadorId = trabajador[0].id;
+  const trabajador_id = trabajador[0].id;
   const empresa = trabajador[0].empresa;
   const obra = trabajador[0].obra;
   const numero_identificacion = trabajador[0].numero_identificacion;
   const [rows] = await db.query(
     `SELECT tipo, hora_usuario, hora_sistema FROM registros_horas WHERE trabajador_id = ? AND fecha = ? ORDER BY hora_sistema`,
-    [trabajadorId, fecha]
+    [trabajador_id, fecha]
   );
   let totalMinutosUsuario = 0;
   let entradaUsuario = null;
@@ -263,25 +264,25 @@ router.get("/horas-extras/:nombre/:fecha", async (req, res) => {
       entradaSistema = null;
     }
   });
-  const horasUsuarioFinal = Math.max((totalMinutosUsuario / 60) - 1, 0);
-  const horasSistemaFinal = Math.max((totalMinutosSistema / 60) - 1, 0);
-  const horasExtrasUsuario = Math.max(horasUsuarioFinal - 8, 0).toFixed(2);
-  const horasExtrasSistema = Math.max(horasSistemaFinal - 8, 0).toFixed(2);
+  const horas_usuario_final = Math.max((totalMinutosUsuario / 60) - 1, 0);
+  const horas_sistema_final = Math.max((totalMinutosSistema / 60) - 1, 0);
+  const horas_extras_usuario = Math.max(horas_usuario_final - 8, 0).toFixed(2);
+  const horas_extras_sistema = Math.max(horas_sistema_final - 8, 0).toFixed(2);
   res.json({
     fecha,
     nombre,
     empresa,
     obra,
     numero_identificacion,
-    horas_extras_usuario: horasExtrasUsuario,
-    horas_extras_sistema: horasExtrasSistema
+    horas_extras_usuario,
+    horas_extras_sistema
   });
 });
 
 // GET: resumen de todos los registros
 router.get("/registros-todos-resumen", async (req, res) => {
   const [trabajadores] = await db.query(
-    `SELECT t.id, t.nombre, t.numero_identificacion, e.nombre as empresa, o.nombreObra as obra FROM trabajadores t
+    `SELECT t.id, t.nombre, t.numero_identificacion, e.nombre as empresa, o.nombre_obra as obra FROM trabajadores t
      LEFT JOIN empresas e ON t.empresa_id = e.id
      LEFT JOIN obras o ON t.obra_id = o.id`
   );
@@ -319,20 +320,20 @@ router.get("/registros-todos-resumen", async (req, res) => {
           entradaSistema = null;
         }
       });
-      const horasUsuarioFinal = Math.max((totalMinutosUsuario / 60) - 1, 0);
-      const horasSistemaFinal = Math.max((totalMinutosSistema / 60) - 1, 0);
-      const horasExtrasUsuario = Math.max(horasUsuarioFinal - 9, 0).toFixed(2);
-      const horasExtrasSistema = Math.max(horasSistemaFinal - 9, 0).toFixed(2);
+      const horas_usuario_final = Math.max((totalMinutosUsuario / 60) - 1, 0);
+      const horas_sistema_final = Math.max((totalMinutosSistema / 60) - 1, 0);
+      const horas_extras_usuario = Math.max(horas_usuario_final - 9, 0).toFixed(2);
+      const horas_extras_sistema = Math.max(horas_sistema_final - 9, 0).toFixed(2);
       resumen.push({
         nombre: trabajador.nombre,
         empresa: trabajador.empresa,
         obra: trabajador.obra,
         numero_identificacion: trabajador.numero_identificacion,
         fecha,
-        horas_usuario: horasUsuarioFinal.toFixed(2),
-        horas_sistema: horasSistemaFinal.toFixed(2),
-        horas_extras_usuario: horasExtrasUsuario,
-        horas_extras_sistema: horasExtrasSistema
+        horas_usuario: horas_usuario_final.toFixed(2),
+        horas_sistema: horas_sistema_final.toFixed(2),
+        horas_extras_usuario,
+        horas_extras_sistema
       });
     }
   }
