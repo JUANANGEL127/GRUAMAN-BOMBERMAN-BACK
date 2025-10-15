@@ -1,16 +1,16 @@
 import { Router } from "express";
 const router = Router();
 
-// Middleware: responde inmediatamente si la DB no está lista
+// Middleware para verificar si la base de datos está disponible
 router.use((req, res, next) => {
   if (!global.db) {
-    console.error("DB no disponible en middleware de checjklist");
+    console.error("DB no disponible en middleware de checklist");
     return res.status(503).json({ error: "Base de datos no inicializada. Intenta nuevamente en unos segundos." });
   }
   next();
 });
 
-// Helper para obtener los campos válidos de la tabla
+// Obtiene los nombres de las columnas válidas de una tabla
 async function obtenerCamposValidos(db, tabla) {
   const result = await db.query(
     `SELECT column_name FROM information_schema.columns WHERE table_name = $1`,
@@ -19,7 +19,7 @@ async function obtenerCamposValidos(db, tabla) {
   return result.rows.map(row => row.column_name);
 }
 
-// Helper para obtener los campos válidos y requeridos de la tabla
+// Obtiene los nombres de las columnas válidas y si son requeridas
 async function obtenerCamposValidosYRequeridos(db, tabla) {
   const result = await db.query(
     `SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = $1`,
@@ -31,7 +31,7 @@ async function obtenerCamposValidosYRequeridos(db, tabla) {
   }));
 }
 
-// POST /bomberman/checjklist
+// Guarda un nuevo checklist en la base de datos
 router.post("/", async (req, res) => {
   const db = global.db;
   if (!db) {
@@ -39,7 +39,6 @@ router.post("/", async (req, res) => {
   }
   let data = req.body;
 
-  // Campos requeridos según la estructura actual
   const camposRequeridos = [
     "nombre_cliente",
     "nombre_proyecto",
@@ -48,7 +47,6 @@ router.post("/", async (req, res) => {
     "nombre_operador"
   ];
 
-  // Verifica que los campos requeridos estén presentes y no sean nulos/vacíos
   const faltantes = camposRequeridos.filter(
     campo => data[campo] === undefined || data[campo] === null || data[campo] === ""
   );
@@ -65,7 +63,6 @@ router.post("/", async (req, res) => {
     const columnas = await obtenerCamposValidosYRequeridos(db, "lista_chequeo");
     const camposValidos = columnas.map(col => col.nombre);
 
-    // Asigna false por defecto a los campos booleanos que no vienen en el body
     columnas.forEach(col => {
       if (
         col.nombre !== "id" &&
@@ -73,12 +70,10 @@ router.post("/", async (req, res) => {
         !(col.nombre in data) &&
         col.nombre !== "observaciones"
       ) {
-        // Si el campo no está en el body, asigna false por defecto
         data[col.nombre] = false;
       }
     });
 
-    // Filtra solo los campos válidos
     const campos = Object.keys(data).filter(key => camposValidos.includes(key));
     const valores = campos.map(key => data[key]);
     const placeholders = campos.map((_, i) => `$${i + 1}`).join(", ");
@@ -98,7 +93,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /bomberman/checjklist
+// Obtiene todos los registros de la tabla lista_chequeo
 router.get("/", async (req, res) => {
   const db = global.db;
   if (!db) {

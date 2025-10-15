@@ -4,28 +4,28 @@ import pkg from "pg";
 import formulario1Router from "./routes/gruaman/formulario1.js";
 import administradorRouter from "./routes/administrador.js";
 import planillaBombeoRouter from "./routes/bomberman/planillabombeo.js";
-import checklistRouter from "./routes/bomberman/checklist.js"; // <-- importar el router
+import checklistRouter from "./routes/bomberman/checklist.js";
 
 const { Pool } = pkg;
 const app = express();
 
 app.use(cors());
 app.use(express.json());
-app.use("/bomberman/planilla_bombeo", planillaBombeoRouter);
-app.use("/bomberman/checklist", checklistRouter); // <-- montar el router
+app.use("/bomberman/planillabombeo", planillaBombeoRouter);
+app.use("/bomberman/checklist", checklistRouter);
 
-// Conexión a PostgreSQL
+// Configuración de la conexión a PostgreSQL
 const pool = new Pool({
   host: "localhost",
   user: "postgres",
-  password: "", // cambia si tu contraseña es diferente
-  database: "postgres", // tu base creada en pgAdmin
+  password: "",
+  database: "postgres",
   port: 5432,
 });
 
 global.db = pool;
 
-// Crear tablas si no existen
+// Creación de tablas si no existen
 (async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS empresas (
@@ -92,27 +92,24 @@ global.db = pool;
   `);
 })();
 
-// Endpoint: obtener nombres de trabajadores
+// Devuelve los nombres de todos los trabajadores
 app.get("/nombres_trabajadores", async (req, res) => {
   try {
     const result = await pool.query(`SELECT nombre FROM trabajadores`);
     const nombres = result.rows.map(row => row.nombre);
     res.json({ nombres });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: "Error al obtener los nombres de trabajadores" });
   }
 });
 
-// Endpoint: guardar datos básicos
+// Guarda los datos básicos de un trabajador
 app.post("/datos_basicos", async (req, res) => {
   const { nombre, empresa, empresa_id, obra_id, numero_identificacion } = req.body;
 
-  if (!nombre) return res.status(400).json({ error: "Falta parámetro: nombre" });
-  if (!empresa) return res.status(400).json({ error: "Falta parámetro: empresa" });
-  if (!empresa_id) return res.status(400).json({ error: "Falta parámetro: empresa_id" });
-  if (!obra_id) return res.status(400).json({ error: "Falta parámetro: obra_id" });
-  if (!numero_identificacion) return res.status(400).json({ error: "Falta parámetro: numero_identificacion" });
+  if (!nombre || !empresa || !empresa_id || !obra_id || !numero_identificacion) {
+    return res.status(400).json({ error: "Faltan parámetros obligatorios" });
+  }
 
   try {
     const trabajador = await pool.query(
@@ -149,12 +146,11 @@ app.post("/datos_basicos", async (req, res) => {
       numero_identificacion,
     });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: "Error al guardar los datos" });
   }
 });
 
-// Endpoint: obtener trabajadorId
+// Devuelve el ID de un trabajador según los parámetros proporcionados
 app.get("/trabajador_id", async (req, res) => {
   const { nombre, empresa, obra, numero_identificacion } = req.query;
   if (!nombre || !empresa || !obra || !numero_identificacion) {
@@ -190,34 +186,31 @@ app.get("/trabajador_id", async (req, res) => {
       numero_identificacion: trabajador.rows[0].numero_identificacion,
     });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: "Error al obtener trabajador" });
   }
 });
 
-// Endpoint: obtener obras
+// Devuelve todas las obras registradas
 app.get("/obras", async (req, res) => {
   try {
     const result = await pool.query(`SELECT id, nombre_obra, constructora FROM obras`);
     res.json({ obras: result.rows });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: "Error al obtener las obras" });
   }
 });
 
-// Endpoint: obtener los números de bomba
+// Devuelve los números de bomba registrados
 app.get("/bombas", async (req, res) => {
   try {
     const result = await pool.query(`SELECT numero_bomba FROM bombas`);
     res.json({ bombas: result.rows });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: "Error al obtener los números de bomba" });
   }
 });
 
-// Validar ubicación
+// Valida si una ubicación está dentro del rango permitido para una obra
 app.post("/validar_ubicacion", async (req, res) => {
   const { obra_id, lat, lon } = req.body;
   if (!obra_id || typeof lat !== "number" || typeof lon !== "number") {
@@ -236,12 +229,11 @@ app.post("/validar_ubicacion", async (req, res) => {
       res.status(403).json({ ok: false, message: "No estás en la ubicación de la obra seleccionada" });
     }
   } catch (error) {
-    console.error(error);
     res.status(500).json({ ok: false, message: "Error al validar ubicación" });
   }
 });
 
-// Función Haversine
+// Calcula la distancia entre dos coordenadas geográficas
 function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const dLat = deg2rad(lat2 - lat1);
@@ -258,7 +250,7 @@ function deg2rad(deg) {
   return deg * (Math.PI / 180);
 }
 
-// Montar routers
+// Monta los routers para las rutas específicas
 app.use("/formulario1", formulario1Router);
 app.use("/administrador", administradorRouter);
 

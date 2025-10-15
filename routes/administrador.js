@@ -1,39 +1,29 @@
 import { Router } from "express";
 const router = Router();
 
-// IMPORTANTE: Si usas consultas SQL que referencian la tabla obras como "o", usa "o.nombre_obra" en vez de "o.nombre"
-
-// Ejemplo de corrección en un query:
-// SELECT ... o.nombre_obra ... FROM obras o ...
-
-// GET /horas-usuario
+// Ruta para obtener las horas ingresadas por el usuario
 router.get('/horas-usuario', (req, res) => {
-    // ...lógica original de index.js para /horas-usuario...
-    // Asegúrate de usar o.nombre_obra en tus queries si usas la tabla obras
+    // ...existing code...
 });
 
-// GET /horas-sistema
+// Ruta para obtener las horas registradas por el sistema
 router.get('/horas-sistema', (req, res) => {
-    // ...lógica original de index.js para /horas-sistema...
-    // Asegúrate de usar o.nombre_obra en tus queries si usas la tabla obras
+    // ...existing code...
 });
 
-// GET /horas
+// Ruta para obtener las horas trabajadas
 router.get('/horas', (req, res) => {
-    // ...lógica original de index.js para /horas...
-    // Asegúrate de usar o.nombre_obra en tus queries si usas la tabla obras
+    // ...existing code...
 });
 
-// GET /horas-extras
+// Ruta para obtener las horas extras trabajadas
 router.get('/horas-extras', (req, res) => {
-    // ...lógica original de index.js para /horas-extras...
-    // Asegúrate de usar o.nombre_obra en tus queries si usas la tabla obras
+    // ...existing code...
 });
 
-// GET /formulario1/registros-todos-resumen
+// Ruta para obtener un resumen de todos los registros
 router.get('/formulario1/registros-todos-resumen', (req, res) => {
-    // ...lógica original de index.js para /formulario1/registros-todos-resumen...
-    // Asegúrate de usar o.nombre_obra en tus queries si usas la tabla obras
+    // ...existing code...
 });
 
 export default router;

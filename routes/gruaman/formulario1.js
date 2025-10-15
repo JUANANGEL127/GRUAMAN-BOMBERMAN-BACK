@@ -4,7 +4,7 @@ import moment from "moment-timezone";
 
 const router = Router();
 
-// Conexión a MySQL
+// Conexión a la base de datos MySQL y creación de tablas si no existen
 let db;
 (async () => {
   db = await mysql.createConnection({
@@ -14,7 +14,6 @@ let db;
     database: "obra_db"
   });
 
-  // Crear tablas si no existen
   await db.query(`
     CREATE TABLE IF NOT EXISTS empresas (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -54,7 +53,7 @@ let db;
   `);
 })();
 
-// POST: procesar solo los datos del formulario1
+// Guarda un registro de horas para un trabajador
 router.post("/registros", async (req, res) => {
   const { trabajador_id, hora_usuario, tipo } = req.body;
 
@@ -62,7 +61,6 @@ router.post("/registros", async (req, res) => {
     return res.status(400).json({ error: "Faltan parámetros obligatorios" });
   }
 
-  // Buscar trabajador
   let [trabajador] = await db.query(
     `SELECT id FROM trabajadores WHERE id = ?`,
     [trabajador_id]
@@ -87,7 +85,7 @@ router.post("/registros", async (req, res) => {
   });
 });
 
-// GET: calcular horas trabajadas (usuario y sistema) por nombre
+// Calcula las horas trabajadas (usuario y sistema) por nombre y fecha
 router.get("/horas/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
@@ -105,6 +103,7 @@ router.get("/horas/:nombre/:fecha", async (req, res) => {
     `SELECT tipo, hora_usuario, hora_sistema FROM registros_horas WHERE trabajador_id = ? AND fecha = ? ORDER BY hora_sistema`,
     [trabajador_id, fecha]
   );
+
   let totalMinutosUsuario = 0;
   let entradaUsuario = null;
   rows.forEach(r => {
@@ -116,6 +115,7 @@ router.get("/horas/:nombre/:fecha", async (req, res) => {
       entradaUsuario = null;
     }
   });
+
   let totalMinutosSistema = 0;
   let entradaSistema = null;
   rows.forEach(r => {
@@ -127,8 +127,10 @@ router.get("/horas/:nombre/:fecha", async (req, res) => {
       entradaSistema = null;
     }
   });
+
   const horas_usuario_final = Math.max((totalMinutosUsuario / 60) - 1, 0).toFixed(2);
   const horas_sistema_final = Math.max((totalMinutosSistema / 60) - 1, 0).toFixed(2);
+
   res.json({
     fecha,
     nombre,
@@ -140,7 +142,7 @@ router.get("/horas/:nombre/:fecha", async (req, res) => {
   });
 });
 
-// GET: ver todos los registros de un trabajador por nombre (incluye empresa)
+// Obtiene todos los registros de un trabajador por nombre y fecha
 router.get("/registros/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
@@ -164,7 +166,7 @@ router.get("/registros/:nombre/:fecha", async (req, res) => {
   });
 });
 
-// GET: horas que ingresó el usuario por nombre
+// Obtiene las horas ingresadas por el usuario para un trabajador
 router.get("/horas-usuario/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
@@ -192,7 +194,7 @@ router.get("/horas-usuario/:nombre/:fecha", async (req, res) => {
   });
 });
 
-// GET: horas registradas por la app (hora_sistema con timezone Colombia) por nombre
+// Obtiene las horas registradas por la aplicación para un trabajador
 router.get("/horas-sistema/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
@@ -224,7 +226,7 @@ router.get("/horas-sistema/:nombre/:fecha", async (req, res) => {
   });
 });
 
-// GET: horas extras trabajadas por nombre
+// Calcula las horas extras trabajadas por un trabajador
 router.get("/horas-extras/:nombre/:fecha", async (req, res) => {
   const { nombre, fecha } = req.params;
   let [trabajador] = await db.query(
@@ -242,6 +244,7 @@ router.get("/horas-extras/:nombre/:fecha", async (req, res) => {
     `SELECT tipo, hora_usuario, hora_sistema FROM registros_horas WHERE trabajador_id = ? AND fecha = ? ORDER BY hora_sistema`,
     [trabajador_id, fecha]
   );
+
   let totalMinutosUsuario = 0;
   let entradaUsuario = null;
   rows.forEach(r => {
@@ -253,6 +256,7 @@ router.get("/horas-extras/:nombre/:fecha", async (req, res) => {
       entradaUsuario = null;
     }
   });
+
   let totalMinutosSistema = 0;
   let entradaSistema = null;
   rows.forEach(r => {
@@ -264,10 +268,12 @@ router.get("/horas-extras/:nombre/:fecha", async (req, res) => {
       entradaSistema = null;
     }
   });
+
   const horas_usuario_final = Math.max((totalMinutosUsuario / 60) - 1, 0);
   const horas_sistema_final = Math.max((totalMinutosSistema / 60) - 1, 0);
   const horas_extras_usuario = Math.max(horas_usuario_final - 8, 0).toFixed(2);
   const horas_extras_sistema = Math.max(horas_sistema_final - 8, 0).toFixed(2);
+
   res.json({
     fecha,
     nombre,
@@ -279,7 +285,7 @@ router.get("/horas-extras/:nombre/:fecha", async (req, res) => {
   });
 });
 
-// GET: resumen de todos los registros
+// Obtiene un resumen de todos los registros de horas
 router.get("/registros-todos-resumen", async (req, res) => {
   const [trabajadores] = await db.query(
     `SELECT t.id, t.nombre, t.numero_identificacion, e.nombre as empresa, o.nombre_obra as obra FROM trabajadores t
@@ -298,6 +304,7 @@ router.get("/registros-todos-resumen", async (req, res) => {
         `SELECT tipo, hora_usuario, hora_sistema FROM registros_horas WHERE trabajador_id = ? AND fecha = ? ORDER BY hora_sistema`,
         [trabajador.id, fecha]
       );
+
       let totalMinutosUsuario = 0;
       let entradaUsuario = null;
       registros.forEach(r => {
@@ -309,6 +316,7 @@ router.get("/registros-todos-resumen", async (req, res) => {
           entradaUsuario = null;
         }
       });
+
       let totalMinutosSistema = 0;
       let entradaSistema = null;
       registros.forEach(r => {
@@ -320,10 +328,12 @@ router.get("/registros-todos-resumen", async (req, res) => {
           entradaSistema = null;
         }
       });
+
       const horas_usuario_final = Math.max((totalMinutosUsuario / 60) - 1, 0);
       const horas_sistema_final = Math.max((totalMinutosSistema / 60) - 1, 0);
       const horas_extras_usuario = Math.max(horas_usuario_final - 9, 0).toFixed(2);
       const horas_extras_sistema = Math.max(horas_sistema_final - 9, 0).toFixed(2);
+
       resumen.push({
         nombre: trabajador.nombre,
         empresa: trabajador.empresa,
