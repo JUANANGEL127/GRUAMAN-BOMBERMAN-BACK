@@ -376,6 +376,7 @@ router.get("/exportar", async (req, res) => {
       });
     });
 
+    
     // Configura el archivo para ser descargado
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", "attachment; filename=planillas_bombeo.xlsx");
