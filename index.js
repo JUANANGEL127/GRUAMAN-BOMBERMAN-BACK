@@ -5,6 +5,7 @@ import formulario1Router from "./routes/gruaman/formulario1.js";
 import administradorRouter from "./routes/administrador.js";
 import planillaBombeoRouter from "./routes/bomberman/planillabombeo.js";
 import checklistRouter from "./routes/bomberman/checklist.js";
+import permisoTrabajoRouter from "./routes/compartido/permiso_trabajo.js";
 
 const { Pool } = pkg;
 const app = express();
@@ -88,6 +89,66 @@ global.db = pool;
       hora_final TIME,
       metros DECIMAL(10,2),
       observaciones TEXT
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS permiso_trabajo (
+      id SERIAL PRIMARY KEY,
+      nombre_cliente VARCHAR(100) NOT NULL,
+      nombre_proyecto VARCHAR(150) NOT NULL,
+      fecha_servicio DATE NOT NULL,
+      nombre_operador VARCHAR(100) NOT NULL,
+      cargo VARCHAR(100) NOT NULL,
+      trabajo_rutinario VARCHAR(10) CHECK (trabajo_rutinario IN ('SI','NO','NA')),
+      tarea_en_alturas VARCHAR(10) CHECK (tarea_en_alturas IN ('SI','NO','NA')),
+      altura_inicial VARCHAR(20),
+      altura_final VARCHAR(20),
+      herramientas_seleccionadas TEXT,
+      herramientas_otros VARCHAR(200),
+      certificado_alturas VARCHAR(10) CHECK (certificado_alturas IN ('SI','NO','NA')),
+      seguridad_social_arl VARCHAR(10) CHECK (seguridad_social_arl IN ('SI','NO','NA')),
+      casco_tipo1 VARCHAR(10) CHECK (casco_tipo1 IN ('SI','NO','NA')),
+      gafas_seguridad VARCHAR(10) CHECK (gafas_seguridad IN ('SI','NO','NA')),
+      proteccion_auditiva VARCHAR(10) CHECK (proteccion_auditiva IN ('SI','NO','NA')),
+      proteccion_respiratoria VARCHAR(10) CHECK (proteccion_respiratoria IN ('SI','NO','NA')),
+      guantes_seguridad VARCHAR(10) CHECK (guantes_seguridad IN ('SI','NO','NA')),
+      botas_punta_acero VARCHAR(10) CHECK (botas_punta_acero IN ('SI','NO','NA')),
+      ropa_reflectiva VARCHAR(10) CHECK (ropa_reflectiva IN ('SI','NO','NA')),
+      arnes_cuerpo_entero VARCHAR(10) CHECK (arnes_cuerpo_entero IN ('SI','NO','NA')),
+      arnes_cuerpo_entero_dielectico VARCHAR(10) CHECK (arnes_cuerpo_entero_dielectico IN ('SI','NO','NA')),
+      mosqueton VARCHAR(10) CHECK (mosqueton IN ('SI','NO','NA')),
+      arrestador_caidas VARCHAR(10) CHECK (arrestador_caidas IN ('SI','NO','NA')),
+      eslinga_absorbedor VARCHAR(10) CHECK (eslinga_absorbedor IN ('SI','NO','NA')),
+      eslinga_posicionamiento VARCHAR(10) CHECK (eslinga_posicionamiento IN ('SI','NO','NA')),
+      linea_vida VARCHAR(10) CHECK (linea_vida IN ('SI','NO','NA')),
+      eslinga_doble VARCHAR(10) CHECK (eslinga_doble IN ('SI','NO','NA')),
+      verificacion_anclaje VARCHAR(10) CHECK (verificacion_anclaje IN ('SI','NO','NA')),
+      procedimiento_charla VARCHAR(10) CHECK (procedimiento_charla IN ('SI','NO','NA')),
+      medidas_colectivas_prevencion VARCHAR(10) CHECK (medidas_colectivas_prevencion IN ('SI','NO','NA')),
+      epp_epcc_buen_estado VARCHAR(10) CHECK (epp_epcc_buen_estado IN ('SI','NO','NA')),
+      equipos_herramienta_buen_estado VARCHAR(10) CHECK (equipos_herramienta_buen_estado IN ('SI','NO','NA')),
+      inspeccion_sistema VARCHAR(10) CHECK (inspeccion_sistema IN ('SI','NO','NA')),
+      plan_emergencia_rescate VARCHAR(10) CHECK (plan_emergencia_rescate IN ('SI','NO','NA')),
+      medidas_caida VARCHAR(10) CHECK (medidas_caida IN ('SI','NO','NA')),
+      kit_rescate VARCHAR(10) CHECK (kit_rescate IN ('SI','NO','NA')),
+      permisos VARCHAR(10) CHECK (permisos IN ('SI','NO','NA')),
+      condiciones_atmosfericas VARCHAR(10) CHECK (condiciones_atmosfericas IN ('SI','NO','NA')),
+      distancia_vertical_caida VARCHAR(10) CHECK (distancia_vertical_caida IN ('SI','NO','NA')),
+      otro_precausiones TEXT,
+      vertical_fija VARCHAR(10) CHECK (vertical_fija IN ('SI','NO','NA')),
+      vertical_portatil VARCHAR(10) CHECK (vertical_portatil IN ('SI','NO','NA')),
+      andamio_multidireccional VARCHAR(10) CHECK (andamio_multidireccional IN ('SI','NO','NA')),
+      andamio_colgante VARCHAR(10) CHECK (andamio_colgante IN ('SI','NO','NA')),
+      elevador_carga VARCHAR(10) CHECK (elevador_carga IN ('SI','NO','NA')),
+      canasta VARCHAR(10) CHECK (canasta IN ('SI','NO','NA')),
+      ascensores VARCHAR(10) CHECK (ascensores IN ('SI','NO','NA')),
+      otro_equipos TEXT,
+      observaciones TEXT,
+      motivo_suspension TEXT,
+      nombre_suspende VARCHAR(100) NOT NULL,
+      nombre_responsable VARCHAR(100) NOT NULL,
+      nombre_coordinador VARCHAR(100)
     );
   `);
 })();
@@ -253,6 +314,7 @@ function deg2rad(deg) {
 // Monta los routers para las rutas específicas
 app.use("/formulario1", formulario1Router);
 app.use("/administrador", administradorRouter);
+app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 
 app.listen(3000, () =>
   console.log("✅ API corriendo en http://localhost:3000 (PostgreSQL conectado)")

@@ -120,13 +120,7 @@ async function enviarCorreo(destinatarios, pdfBuffer) {
 
 // Lista de correos fijos a los que se enviará el PDF
 const correosFijos = [
-  "desarrolloit@gruasyequipos.com",
-  "ybreziner@gruasyequipos.com",
-  "jefesst@gruasyequipos.com",
-  "dir.operativabta@allinconcrete.com-co",
-  "dir.operaciones@gruasyequipos.com",
-  "Director.renta@gruasyequipos.com",
-  "gerencia@gruasyequipos.com",
+  "desarrolloit@gruasyequipos.com"
 ];
 
 // Endpoint para guardar una nueva planilla de bombeo
