@@ -8,6 +8,7 @@ import checklistRouter from "./routes/bomberman/checklist.js";
 import permisoTrabajoRouter from "./routes/compartido/permiso_trabajo.js";
 import chequeoAlturasRouter from "./routes/compartido/chequeo_alturas.js";
 import chequeoTorregruasRouter from "./routes/gruaman/chequeo_torregruas.js";
+import inspeccionEpccRouter from "./routes/gruaman/inspeccion_epcc.js";
 
 const { Pool } = pkg;
 const app = express();
@@ -227,6 +228,30 @@ global.db = pool;
       observaciones TEXT
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS inspeccion_epcc (
+      id SERIAL PRIMARY KEY,
+      nombre_cliente VARCHAR(255) NOT NULL,
+      nombre_proyecto VARCHAR(255) NOT NULL,
+      fecha_servicio DATE NOT NULL,
+      nombre_operador VARCHAR(255) NOT NULL,
+      cargo VARCHAR(255) NOT NULL,
+      serial_arnes VARCHAR(255),
+      serial_arrestador VARCHAR(255),
+      serial_mosqueton VARCHAR(255),
+      serial_posicionamiento VARCHAR(255),
+      serial_eslinga_y VARCHAR(255),
+      serial_linea_vida VARCHAR(255),
+      arnes VARCHAR(10) CHECK (arnes IN ('SI', 'NO', 'NA')) NOT NULL,
+      arrestador_caidas VARCHAR(10) CHECK (arrestador_caidas IN ('SI', 'NO', 'NA')) NOT NULL,
+      mosqueton VARCHAR(10) CHECK (mosqueton IN ('SI', 'NO', 'NA')) NOT NULL,
+      eslinga_posicionamiento VARCHAR(10) CHECK (eslinga_posicionamiento IN ('SI', 'NO', 'NA')) NOT NULL,
+      eslinga_y_absorbedor VARCHAR(10) CHECK (eslinga_y_absorbedor IN ('SI', 'NO', 'NA')) NOT NULL,
+      linea_vida VARCHAR(10) CHECK (linea_vida IN ('SI', 'NO', 'NA')) NOT NULL,
+      observaciones TEXT
+    );
+  `);
 })();
 
 // Devuelve los nombres de todos los trabajadores
@@ -393,6 +418,7 @@ app.use("/administrador", administradorRouter);
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
+app.use("/gruaman/inspeccion_epcc", inspeccionEpccRouter);
 
 app.listen(3000, () =>
   console.log("✅ API corriendo en http://localhost:3000 (PostgreSQL conectado)")
