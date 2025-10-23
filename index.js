@@ -7,6 +7,7 @@ import planillaBombeoRouter from "./routes/bomberman/planillabombeo.js";
 import checklistRouter from "./routes/bomberman/checklist.js";
 import permisoTrabajoRouter from "./routes/compartido/permiso_trabajo.js";
 import chequeoAlturasRouter from "./routes/compartido/chequeo_alturas.js";
+import chequeoTorregruasRouter from "./routes/gruaman/chequeo_torregruas.js";
 
 const { Pool } = pkg;
 const app = express();
@@ -192,6 +193,40 @@ global.db = pool;
       observaciones TEXT
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chequeo_torregruas (
+      id SERIAL PRIMARY KEY,
+      nombre_cliente VARCHAR(100) NOT NULL,
+      nombre_proyecto VARCHAR(150) NOT NULL,
+      fecha_servicio DATE NOT NULL,
+      nombre_operador VARCHAR(100) NOT NULL,
+      cargo VARCHAR(100) NOT NULL,
+      epp_personal VARCHAR(10) CHECK (epp_personal IN ('SI','NO','NA')),
+      epp_contra_caidas VARCHAR(10) CHECK (epp_contra_caidas IN ('SI','NO','NA')),
+      ropa_dotacion VARCHAR(10) CHECK (ropa_dotacion IN ('SI','NO','NA')),
+      tornilleria_ajustada VARCHAR(10) CHECK (tornilleria_ajustada IN ('SI','NO','NA')),
+      anillo_arriostrador VARCHAR(10) CHECK (anillo_arriostrador IN ('SI','NO','NA')),
+      soldaduras_buen_estado VARCHAR(10) CHECK (soldaduras_buen_estado IN ('SI','NO','NA')),
+      base_buenas_condiciones VARCHAR(10) CHECK (base_buenas_condiciones IN ('SI','NO','NA')),
+      funcionamiento_pito VARCHAR(10) CHECK (funcionamiento_pito IN ('SI','NO','NA')),
+      cables_alimentacion VARCHAR(10) CHECK (cables_alimentacion IN ('SI','NO','NA')),
+      movimientos_maquina VARCHAR(10) CHECK (movimientos_maquina IN ('SI','NO','NA')),
+      cables_enrollamiento VARCHAR(10) CHECK (cables_enrollamiento IN ('SI','NO','NA')),
+      frenos_funcionando VARCHAR(10) CHECK (frenos_funcionando IN ('SI','NO','NA')),
+      poleas_dinamometrica VARCHAR(10) CHECK (poleas_dinamometrica IN ('SI','NO','NA')),
+      gancho_seguro VARCHAR(10) CHECK (gancho_seguro IN ('SI','NO','NA')),
+      punto_muerto VARCHAR(10) CHECK (punto_muerto IN ('SI','NO','NA')),
+      mando_buen_estado VARCHAR(10) CHECK (mando_buen_estado IN ('SI','NO','NA')),
+      baldes_buen_estado VARCHAR(10) CHECK (baldes_buen_estado IN ('SI','NO','NA')),
+      canasta_materiales VARCHAR(10) CHECK (canasta_materiales IN ('SI','NO','NA')),
+      estrobos_buen_estado VARCHAR(10) CHECK (estrobos_buen_estado IN ('SI','NO','NA')),
+      grilletes_buen_estado VARCHAR(10) CHECK (grilletes_buen_estado IN ('SI','NO','NA')),
+      ayudante_amarre VARCHAR(10) CHECK (ayudante_amarre IN ('SI','NO','NA')),
+      radio_comunicacion VARCHAR(10) CHECK (radio_comunicacion IN ('SI','NO','NA')),
+      observaciones TEXT
+    );
+  `);
 })();
 
 // Devuelve los nombres de todos los trabajadores
@@ -357,6 +392,7 @@ app.use("/formulario1", formulario1Router);
 app.use("/administrador", administradorRouter);
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
+app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
 
 app.listen(3000, () =>
   console.log("✅ API corriendo en http://localhost:3000 (PostgreSQL conectado)")
