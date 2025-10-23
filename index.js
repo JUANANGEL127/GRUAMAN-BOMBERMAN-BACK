@@ -6,6 +6,7 @@ import administradorRouter from "./routes/administrador.js";
 import planillaBombeoRouter from "./routes/bomberman/planillabombeo.js";
 import checklistRouter from "./routes/bomberman/checklist.js";
 import permisoTrabajoRouter from "./routes/compartido/permiso_trabajo.js";
+import chequeoAlturasRouter from "./routes/compartido/chequeo_alturas.js";
 
 const { Pool } = pkg;
 const app = express();
@@ -149,6 +150,46 @@ global.db = pool;
       nombre_suspende VARCHAR(100) NOT NULL,
       nombre_responsable VARCHAR(100) NOT NULL,
       nombre_coordinador VARCHAR(100)
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chequeo_alturas (
+      id SERIAL PRIMARY KEY,
+      nombre_cliente VARCHAR(100) NOT NULL,
+      nombre_proyecto VARCHAR(150) NOT NULL,
+      fecha_servicio DATE NOT NULL,
+      nombre_operador VARCHAR(100) NOT NULL,
+      cargo VARCHAR(100) NOT NULL,
+      sintomas_fisicos VARCHAR(10) CHECK (sintomas_fisicos IN ('SI','NO','NA')),
+      medicamento VARCHAR(10) CHECK (medicamento IN ('SI','NO','NA')),
+      consumo_sustancias VARCHAR(10) CHECK (consumo_sustancias IN ('SI','NO','NA')),
+      condiciones_fisicas_mentales VARCHAR(10) CHECK (condiciones_fisicas_mentales IN ('SI','NO','NA')),
+      lugar_trabajo_demarcado VARCHAR(10) CHECK (lugar_trabajo_demarcado IN ('SI','NO','NA')),
+      inspeccion_medios_comunicacion VARCHAR(10) CHECK (inspeccion_medios_comunicacion IN ('SI','NO','NA')),
+      equipo_demarcado_seguro VARCHAR(10) CHECK (equipo_demarcado_seguro IN ('SI','NO','NA')),
+      base_libre_empozamiento VARCHAR(10) CHECK (base_libre_empozamiento IN ('SI','NO','NA')),
+      iluminacion_trabajos_nocturnos VARCHAR(10) CHECK (iluminacion_trabajos_nocturnos IN ('SI','NO','NA')),
+      uso_adecuado_epp_epcc VARCHAR(10) CHECK (uso_adecuado_epp_epcc IN ('SI','NO','NA')),
+      uso_epp_trabajadores VARCHAR(10) CHECK (uso_epp_trabajadores IN ('SI','NO','NA')),
+      epcc_adecuado_riesgo VARCHAR(10) CHECK (epcc_adecuado_riesgo IN ('SI','NO','NA')),
+      interferencia_otros_trabajos VARCHAR(10) CHECK (interferencia_otros_trabajos IN ('SI','NO','NA')),
+      observacion_continua_trabajadores VARCHAR(10) CHECK (observacion_continua_trabajadores IN ('SI','NO','NA')),
+      punto_anclaje_definido VARCHAR(10) CHECK (punto_anclaje_definido IN ('SI','NO','NA')),
+      inspeccion_previa_sistema_acceso VARCHAR(10) CHECK (inspeccion_previa_sistema_acceso IN ('SI','NO','NA')),
+      plan_izaje_cumple_programa VARCHAR(10) CHECK (plan_izaje_cumple_programa IN ('SI','NO','NA')),
+      inspeccion_elementos_izaje VARCHAR(10) CHECK (inspeccion_elementos_izaje IN ('SI','NO','NA')),
+      limpieza_elementos_izaje VARCHAR(10) CHECK (limpieza_elementos_izaje IN ('SI','NO','NA')),
+      auxiliar_piso_asignado VARCHAR(10) CHECK (auxiliar_piso_asignado IN ('SI','NO','NA')),
+      consignacion_circuito VARCHAR(10) CHECK (consignacion_circuito IN ('SI','NO','NA')),
+      circuitos_identificados VARCHAR(10) CHECK (circuitos_identificados IN ('SI','NO','NA')),
+      cinco_reglas_oro VARCHAR(10) CHECK (cinco_reglas_oro IN ('SI','NO','NA')),
+      trabajo_con_tension_protocolo VARCHAR(10) CHECK (trabajo_con_tension_protocolo IN ('SI','NO','NA')),
+      informacion_riesgos_trabajadores VARCHAR(10) CHECK (informacion_riesgos_trabajadores IN ('SI','NO','NA')),
+      distancias_minimas_seguridad VARCHAR(10) CHECK (distancias_minimas_seguridad IN ('SI','NO','NA')),
+      tablero_libre_elementos_riesgo VARCHAR(10) CHECK (tablero_libre_elementos_riesgo IN ('SI','NO','NA')),
+      cables_en_buen_estado VARCHAR(10) CHECK (cables_en_buen_estado IN ('SI','NO','NA')),
+      observaciones TEXT
     );
   `);
 })();
@@ -315,6 +356,7 @@ function deg2rad(deg) {
 app.use("/formulario1", formulario1Router);
 app.use("/administrador", administradorRouter);
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
+app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 
 app.listen(3000, () =>
   console.log("✅ API corriendo en http://localhost:3000 (PostgreSQL conectado)")
