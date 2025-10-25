@@ -9,6 +9,7 @@ import permisoTrabajoRouter from "./routes/compartido/permiso_trabajo.js";
 import chequeoAlturasRouter from "./routes/compartido/chequeo_alturas.js";
 import chequeoTorregruasRouter from "./routes/gruaman/chequeo_torregruas.js";
 import inspeccionEpccRouter from "./routes/gruaman/inspeccion_epcc.js";
+import inspeccionIzajeRouter from "./routes/gruaman/inspeccion_izaje.js";
 
 const { Pool } = pkg;
 const app = express();
@@ -252,6 +253,64 @@ global.db = pool;
       observaciones TEXT
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS inspeccion_izaje (
+      id SERIAL PRIMARY KEY,
+      nombre_cliente VARCHAR(255) NOT NULL,
+      nombre_proyecto VARCHAR(255) NOT NULL,
+      fecha_servicio DATE NOT NULL,
+      nombre_operador VARCHAR(255) NOT NULL,
+      cargo VARCHAR(255) NOT NULL,
+      modelo_grua VARCHAR(255) NOT NULL,
+      altura_gancho VARCHAR(255) NOT NULL,
+      marca_balde_concreto1 VARCHAR(255),
+      serial_balde_concreto1 VARCHAR(255),
+      capacidad_balde_concreto1 VARCHAR(255),
+      balde_concreto1_buen_estado VARCHAR(10) CHECK (balde_concreto1_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      balde_concreto1_mecanismo_apertura VARCHAR(10) CHECK (balde_concreto1_mecanismo_apertura  IN ('SI','NO','NA')) NOT NULL,
+      balde_concreto1_soldadura VARCHAR(10) CHECK (balde_concreto1_soldadura IN ('SI','NO','NA')) NOT NULL,
+      balde_concreto1_estructura VARCHAR(10) CHECK (balde_concreto1_estructura IN ('SI','NO','NA')) NOT NULL,
+      balde_concreto1_aseo VARCHAR(10) CHECK (balde_concreto1_aseo IN ('SI','NO','NA')) NOT NULL,
+      marca_balde_concreto2 VARCHAR(255),
+      serial_balde_concreto2 VARCHAR(255),
+      capacidad_balde_concreto2 VARCHAR(255),
+      balde_concreto2_buen_estado VARCHAR(10) CHECK (balde_concreto2_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      balde_concreto2_mecanismo_apertura VARCHAR(10) CHECK (balde_concreto2_mecanismo_apertura  IN ('SI','NO','NA')) NOT NULL,
+      balde_concreto2_soldadura VARCHAR(10) CHECK (balde_concreto2_soldadura IN ('SI','NO','NA')) NOT NULL,
+      balde_concreto2_estructura VARCHAR(10) CHECK (balde_concreto2_estructura IN ('SI','NO','NA')) NOT NULL,
+      balde_concreto2_aseo VARCHAR(10) CHECK (balde_concreto2_aseo IN ('SI','NO','NA')) NOT NULL,
+      marca_balde_escombro VARCHAR(255),
+      serial_balde_escombro VARCHAR(255),
+      capacidad_balde_escombro VARCHAR(255),
+      balde_escombro_buen_estado VARCHAR(10) CHECK (balde_escombro_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      balde_escombro_mecanismo_apertura VARCHAR(10) CHECK (balde_escombro_mecanismo_apertura  IN ('SI','NO','NA')) NOT NULL,
+      balde_escombro_soldadura VARCHAR(10) CHECK (balde_escombro_soldadura IN ('SI','NO','NA')) NOT NULL,
+      balde_escombro_estructura VARCHAR(10) CHECK (balde_escombro_estructura IN ('SI','NO','NA')) NOT NULL,
+      marca_canasta_material VARCHAR(255),
+      serial_canasta_material VARCHAR(255),
+      capacidad_canasta_material VARCHAR(255),
+      canasta_material_buen_estado VARCHAR(10) CHECK (canasta_material_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      canasta_material_malla_seguridad_intacta VARCHAR(10) CHECK (canasta_material_malla_seguridad_intacta IN ('SI','NO','NA')) NOT NULL,
+      canasta_material_espadas VARCHAR(10) CHECK (canasta_material_espadas IN ('SI','NO','NA')) NOT NULL,
+      canasta_material_soldadura VARCHAR(10) CHECK (canasta_material_soldadura IN ('SI','NO','NA')) NOT NULL,
+      numero_eslinga_cadena VARCHAR(255),
+      capacidad_eslinga_cadena VARCHAR(255),
+      eslinga_cadena_ramales VARCHAR(10) CHECK (eslinga_cadena_ramales IN ('SI','NO','NA')) NOT NULL,
+      eslinga_cadena_grilletes VARCHAR(10) CHECK (eslinga_cadena_grilletes IN ('SI','NO','NA')) NOT NULL,
+      eslinga_cadena_tornillos VARCHAR(10) CHECK (eslinga_cadena_tornillos IN ('SI','NO','NA')) NOT NULL,
+      serial_eslinga_sintetica VARCHAR(255),
+      capacidad_eslinga_sintetica VARCHAR(255),
+      eslinga_sintetica_textil VARCHAR(10) CHECK (eslinga_sintetica_textil IN ('SI','NO','NA')) NOT NULL,
+      eslinga_sintetica_costuras VARCHAR(10) CHECK (eslinga_sintetica_costuras IN ('SI','NO','NA')) NOT NULL,
+      eslinga_sintetica_etiquetas VARCHAR(10) CHECK (eslinga_sintetica_etiquetas IN ('SI','NO','NA')) NOT NULL,
+      serial_grillete VARCHAR(255),
+      capacidad_grillete VARCHAR(255),
+      grillete_perno_danos VARCHAR(10) CHECK (grillete_perno_danos IN ('SI','NO','NA')) NOT NULL,
+      grillete_cuerpo_buen_estado VARCHAR(10) CHECK (grillete_cuerpo_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      observaciones TEXT
+    );
+  `);
 })();
 
 // Devuelve los nombres de todos los trabajadores
@@ -419,6 +478,7 @@ app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
 app.use("/gruaman/inspeccion_epcc", inspeccionEpccRouter);
+app.use("/gruaman/inspeccion_izaje", inspeccionIzajeRouter);
 
 app.listen(3000, () =>
   console.log("✅ API corriendo en http://localhost:3000 (PostgreSQL conectado)")
