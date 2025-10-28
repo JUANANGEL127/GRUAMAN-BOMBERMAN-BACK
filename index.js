@@ -796,3 +796,13 @@ app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
 app.listen(3000, () =>
   console.log("✅ API corriendo en http://localhost:3000 (PostgreSQL conectado)")
 );
+
+// Devuelve los datos básicos de todos los trabajadores
+app.get("/datos_basicos", async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT nombre, empresa_id, numero_identificacion FROM trabajadores`);
+    res.json({ datos: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: "Error al obtener los datos básicos de trabajadores" });
+  }
+});
