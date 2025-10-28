@@ -12,6 +12,7 @@ import inspeccionEpccRouter from "./routes/gruaman/inspeccion_epcc.js";
 import inspeccionIzajeRouter from "./routes/gruaman/inspeccion_izaje.js";
 import inventariosObraRouter from "./routes/bomberman/inventariosobra.js";
 import inspeccionEpccBombermanRouter from "./routes/bomberman/inspeccion_epcc_bomberman.js";
+import fetch from 'node-fetch'; // Si usas Node < 18, instala: npm install node-fetch
 
 const { Pool } = pkg;
 const app = express();
@@ -622,6 +623,20 @@ global.db = pool;
       observaciones_generales TEXT
     );
   `);
+
+  // Tabla para registrar llamadas a la API de WhatsApp (debug)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wa_logs (
+      id SERIAL PRIMARY KEY,
+      phone_number_id VARCHAR(50),
+      destinatario VARCHAR(50),
+      request_body JSONB,
+      response_status INT,
+      response_headers JSONB,
+      response_body JSONB,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 })();
 
 // Devuelve los nombres de todos los trabajadores
@@ -804,5 +819,118 @@ app.get("/datos_basicos", async (req, res) => {
     res.json({ datos: result.rows });
   } catch (error) {
     res.status(500).json({ error: "Error al obtener los datos básicos de trabajadores" });
+  }
+});
+
+// Reemplazar el handler existente por uno que reexponga status/headers/body de la WA API
+app.post('/api/emergencia', async (req, res) => {
+  try {
+    const { usuario, ubicacion } = req.body;
+
+    // Preferir variables de entorno en producción
+    //    const phoneNumberId = process.env.WA_PHONE_NUMBER_ID || '1341362294035680';
+    //    const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBP9jYXdgLTGF44YudZAcOdnDoRwV9TaqZAuJZBpsPchZAMZAtrbw6GEIjZCSZCAYLOmpNwnAZAhKUKuMnkzeTrdD6b5HRZBXF2ZBnj1yY7xYiZCgOtyvHySdvvs8lBhad0mhbsEAZBurQEKyTcuUsJPIfsCO3OZAPNXvjA9RqcloSWZBnmlgQaJWk3NVr75LjXUhNFnyaKWAiZBMJDKuFWRk6CvkMUbtiBV8vdNWZCXVuWAZDZD';
+    //    const destinatario = process.env.WA_DESTINATARIO || '573043660371';
+    // phoneNumberId = "Identificador de número de teléfono" (no el id de la cuenta)
+    const phoneNumberId = process.env.WA_PHONE_NUMBER_ID || '860177043826159';
+    const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBP5dIjWzYNzQBthQeJvY4X9K8CklaC5y0ZBGSaA72d2dcgZAu090ZAEx3Uz0B9hFZAYdDvOuOpQZAzwpGZAp6mfRpJU0y2CCt32lGPFG2b2WG1r6ZBoqYkiTDmXsHAgZAXqCC4FxVUPZCGo9dZCa25XNyTsWI4xFR47hoT3kxAiWe58ZBoy3KInk5eUswHfp2XUvuMoOluZCuWELLGbnbHWYctBbGhf60xvyTUmbntwZDZD';
+    const destinatario = process.env.WA_DESTINATARIO || '573043660371';
+
+    const mensaje = `🚨 EMERGENCIA 🚨\nUsuario: ${usuario}\nUbicación: ${ubicacion || 'me encuentro en apuros'}`;
+
+    let response;
+    try {
+      response = await fetch(`https://graph.facebook.com/v17.0/${phoneNumberId}/messages`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: destinatario,
+          type: 'text',
+          text: { body: mensaje },
+        }),
+      });
+    } catch (networkErr) {
+      console.error('Network error calling WhatsApp API:', networkErr);
+      return res.status(502).json({ success: false, message: 'Network error contacting WhatsApp API', error: networkErr.message });
+    }
+
+    const rawText = await response.text();
+    let result;
+    try { result = JSON.parse(rawText); } catch (e) { result = { raw: rawText }; }
+
+    const headersObj = Object.fromEntries(response.headers.entries());
+
+    // Guardar log en BD (no bloqueante para la respuesta)
+    try {
+      const insert = await pool.query(
+        `INSERT INTO wa_logs (phone_number_id, destinatario, request_body, response_status, response_headers, response_body)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [
+          phoneNumberId,
+          destinatario,
+          { usuario, ubicacion, mensaje },
+          response.status,
+          headersObj,
+          result,
+        ]
+      );
+      const logId = insert.rows[0]?.id;
+      console.log('WA log saved id=', logId);
+    } catch (logErr) {
+      console.error('Error guardando log WA en BD:', logErr);
+    }
+
+    console.log('WA API status:', response.status, response.statusText);
+    console.log('WA API headers:', headersObj);
+    console.log('WA API body:', result);
+
+    // Manejo específico para GraphMethodException / subcode 33 (ID inválido / permisos)
+    if (result && result.error) {
+      const err = result.error;
+      if (err.type === 'GraphMethodException' && err.code === 100 && err.error_subcode === 33) {
+        return res.status(400).json({
+          success: false,
+          message: 'El phoneNumberId parece incorrecto o no tiene permisos.',
+          help: 'WA_PHONE_NUMBER_ID debe ser el "Phone number ID" del número de WhatsApp Business (no el ID de la app o negocio).',
+          action: 'Revisa Business Manager → WhatsApp → Phone numbers y usa el Phone number ID. Asegura que el token tenga permisos y que el número esté habilitado.',
+          suppliedPhoneNumberId: phoneNumberId,
+          waError: err
+        });
+      }
+
+      // Responder el error original si no es el caso anterior
+      return res.status(response.status || 400).json({
+        success: false,
+        message: 'Error de la API de WhatsApp (ver waBody)',
+        waBody: result
+      });
+    }
+
+    // Caso OK: devolver resultado
+    return res.status(200).json({
+      success: true,
+      message: 'Mensaje aceptado por la API de WhatsApp',
+      waResult: result,
+      waHeaders: headersObj
+    });
+
+  } catch (error) {
+    console.error('Error al enviar mensaje WhatsApp:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Endpoint para consultar logs de WhatsApp (limit opcional)
+app.get('/wa/logs', async (req, res) => {
+  try {
+    const limit = Math.min(100, parseInt(req.query.limit) || 50);
+    const result = await pool.query(`SELECT * FROM wa_logs ORDER BY id DESC LIMIT $1`, [limit]);
+    res.json({ logs: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener logs de WhatsApp' });
   }
 });
