@@ -10,6 +10,8 @@ import chequeoAlturasRouter from "./routes/compartido/chequeo_alturas.js";
 import chequeoTorregruasRouter from "./routes/gruaman/chequeo_torregruas.js";
 import inspeccionEpccRouter from "./routes/gruaman/inspeccion_epcc.js";
 import inspeccionIzajeRouter from "./routes/gruaman/inspeccion_izaje.js";
+import inventariosObraRouter from "./routes/bomberman/inventariosobra.js";
+import inspeccionEpccBombermanRouter from "./routes/bomberman/inspeccion_epcc_bomberman.js";
 
 const { Pool } = pkg;
 const app = express();
@@ -472,6 +474,154 @@ global.db = pool;
       observaciones TEXT
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS inventario_obra (
+      id SERIAL PRIMARY KEY,
+      cliente_constructora           VARCHAR(100) NOT NULL,
+      proyecto_constructora          VARCHAR(100) NOT NULL,
+      fecha_registro                 DATE NOT NULL,
+      nombre_operador                VARCHAR(100) NOT NULL,
+      cargo_operador                 VARCHAR(100) NOT NULL,
+      bola_limpieza_tuberia_55_cifa  NUMERIC NOT NULL,
+      jostick NUMERIC NOT NULL,
+      inyector_grasa NUMERIC NOT NULL,
+      caja_herramientas NUMERIC NOT NULL,
+      tubo_entrega_50cm_flanche_plano NUMERIC NOT NULL,
+      caneca_5_galones NUMERIC NOT NULL,
+      caneca_55_galones NUMERIC NOT NULL,
+      pimpinas_5_6_galones NUMERIC NOT NULL,
+      manguera_bicolor NUMERIC NOT NULL,
+      juego_llaves_x3_piezas NUMERIC NOT NULL,
+      pinza_picolor NUMERIC NOT NULL,
+      bristol_14mm NUMERIC NOT NULL,
+      bristol_12mm NUMERIC NOT NULL,
+      juego_llaves_bristol_x9 NUMERIC NOT NULL,
+      cortafrio NUMERIC NOT NULL,
+      pinzas_punta NUMERIC NOT NULL,
+      llave_expansiva_15 NUMERIC NOT NULL,
+      maseta NUMERIC NOT NULL,
+      tubo_para_abrazadera NUMERIC NOT NULL,
+      llave_11 NUMERIC NOT NULL,
+      llave_10 NUMERIC NOT NULL,
+      llave_13 NUMERIC NOT NULL,
+      llave_14 NUMERIC NOT NULL,
+      llave_17 NUMERIC NOT NULL,
+      llave_19 NUMERIC NOT NULL,
+      llave_22 NUMERIC NOT NULL,
+      llave_24 NUMERIC NOT NULL,
+      llave_27 NUMERIC NOT NULL,
+      llave_30 NUMERIC NOT NULL,
+      llave_32 NUMERIC NOT NULL,
+      destornillador_pala_65x125mm NUMERIC NOT NULL,
+      destornillador_pala_8x150mm NUMERIC NOT NULL,
+      destornillador_pala_55x125mm NUMERIC NOT NULL,
+      destornillador_estrella_ph3x150mm NUMERIC NOT NULL,
+      destornillador_estrella_ph2x100mm NUMERIC NOT NULL,
+      destornillador_estrella_ph3x75mm NUMERIC NOT NULL,
+      cunete_grasa_5_galones NUMERIC NOT NULL,
+      bomba_concreto_pc506_309_cifa_estado VARCHAR(10) CHECK (bomba_concreto_pc506_309_cifa_estado IN ('BUENA','MALA')) NOT NULL,
+      bomba_concreto_pc506_309_cifa_observacion TEXT,
+      bomba_concreto_pc607_411_cifa_estado VARCHAR(10) CHECK (bomba_concreto_pc607_411_cifa_estado IN ('BUENA','MALA')) NOT NULL,
+      bomba_concreto_pc607_411_cifa_observacion TEXT,
+      bomba_concreto_tb30_turbosol_estado VARCHAR(10) CHECK (bomba_concreto_tb30_turbosol_estado IN ('BUENA','MALA')) NOT NULL,
+      bomba_concreto_tb30_turbosol_observacion TEXT,
+      bomba_concreto_tb50_turbosol_estado VARCHAR(10) CHECK (bomba_concreto_tb50_turbosol_estado IN ('BUENA','MALA')) NOT NULL,
+      bomba_concreto_tb50_turbosol_observacion TEXT,
+      tubo_3mt_flanche_plano_estado VARCHAR(10) CHECK (tubo_3mt_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
+      tubo_3mt_flanche_plano_observacion TEXT,
+      tubo_2mt_flanche_plano_estado VARCHAR(10) CHECK (tubo_2mt_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
+      tubo_2mt_flanche_plano_observacion TEXT,
+      tubo_1mt_flanche_plano_estado VARCHAR(10) CHECK (tubo_1mt_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
+      tubo_1mt_flanche_plano_observacion TEXT,
+      abrazadera_3_pulg_flanche_plano_estado VARCHAR(10) CHECK (abrazadera_3_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
+      abrazadera_3_pulg_flanche_plano_observacion TEXT,
+      empaque_3_pulg_flanche_plano_estado VARCHAR(10) CHECK (empaque_3_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
+      empaque_3_pulg_flanche_plano_observacion TEXT,
+      abrazadera_4_pulg_flanche_plano_estado VARCHAR(10) CHECK (abrazadera_4_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
+      abrazadera_4_pulg_flanche_plano_observacion TEXT,
+      empaque_4_pulg_flanche_plano_estado VARCHAR(10) CHECK (empaque_4_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
+      empaque_4_pulg_flanche_plano_observacion TEXT,
+      abrazadera_5_pulg_flanche_plano_estado VARCHAR(10) CHECK (abrazadera_5_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
+      abrazadera_5_pulg_flanche_plano_observacion TEXT,
+      empaque_5_pulg_flanche_plano_estado VARCHAR(10) CHECK (empaque_5_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
+      empaque_5_pulg_flanche_plano_observacion TEXT,
+      codo_45_r1000_5_pulg_flanche_estado VARCHAR(10) CHECK (codo_45_r1000_5_pulg_flanche_estado IN ('BUENA','MALA')) NOT NULL,
+      codo_45_r1000_5_pulg_flanche_observacion TEXT,
+      codo_90_r500_5_pulg_flanche_estado VARCHAR(10) CHECK (codo_90_r500_5_pulg_flanche_estado IN ('BUENA','MALA')) NOT NULL,
+      codo_90_r500_5_pulg_flanche_observacion  TEXT,
+      codo_salida_6_pulg_turbosol_estado VARCHAR(10) CHECK (codo_salida_6_pulg_turbosol_estado IN ('BUENA','MALA')) NOT NULL,
+      codo_salida_6_pulg_turbosol_observacion  TEXT,
+      manguera_3_pulg_x10mt_estado VARCHAR(10) CHECK (manguera_3_pulg_x10mt_estado IN ('BUENA','MALA')) NOT NULL,
+      manguera_3_pulg_x10mt_observacion        TEXT,
+      manguera_5_pulg_x6mt_estado VARCHAR(10) CHECK (manguera_5_pulg_x6mt_estado IN ('BUENA','MALA')) NOT NULL,
+      manguera_5_pulg_x6mt_observacion TEXT,
+      reduccion_5_a_4_pulg_estado VARCHAR(10) CHECK (reduccion_5_a_4_pulg_estado IN ('BUENA','MALA')) NOT NULL,
+      reduccion_5_a_4_pulg_observacion TEXT,
+      valvula_guillotina_55_estado VARCHAR(10) CHECK (valvula_guillotina_55_estado IN ('BUENA','MALA')) NOT NULL,
+      valvula_guillotina_55_observacion TEXT,
+      extintor_estado VARCHAR(10) CHECK (extintor_estado IN ('BUENA','MALA')) NOT NULL,
+      extintor_observacion TEXT,
+      botiquin_estado VARCHAR(10) CHECK (botiquin_estado IN ('BUENA','MALA')) NOT NULL,
+      botiquin_observacion TEXT,
+      observaciones_generales TEXT
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS inspeccion_epcc_bomberman (
+      id SERIAL PRIMARY KEY,
+      cliente_constructora VARCHAR(100) NOT NULL,
+      proyecto_constructora VARCHAR(100) NOT NULL,
+      fecha_registro DATE NOT NULL,
+      nombre_operador VARCHAR(100) NOT NULL,
+      cargo_operador VARCHAR(100) NOT NULL,
+      sintoma_malestar_fisico VARCHAR(10) CHECK (sintoma_malestar_fisico IN ('SI','NO','NA')) NOT NULL,
+      uso_medicamentos_que_afecten_alerta VARCHAR(10) CHECK (uso_medicamentos_que_afecten_alerta IN ('SI','NO','NA')) NOT NULL,
+      consumo_sustancias_12h VARCHAR(10) CHECK (consumo_sustancias_12h IN ('SI','NO','NA')) NOT NULL,
+      condiciones_fisicas_tareas_criticas VARCHAR(10) CHECK (condiciones_fisicas_tareas_criticas IN ('SI','NO','NA')) NOT NULL,
+      competencia_vigente_tarea_critica VARCHAR(10) CHECK (competencia_vigente_tarea_critica IN ('SI','NO','NA')) NOT NULL,
+      proteccion_cabeza_buen_estado VARCHAR(10) CHECK (proteccion_cabeza_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      proteccion_auditiva_buen_estado VARCHAR(10) CHECK (proteccion_auditiva_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      proteccion_visual_buen_estado VARCHAR(10) CHECK (proteccion_visual_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      proteccion_respiratoria_buen_estado VARCHAR(10) CHECK (proteccion_respiratoria_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      guantes_proteccion_buen_estado VARCHAR(10) CHECK (guantes_proteccion_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      ropa_trabajo_buen_estado VARCHAR(10) CHECK (ropa_trabajo_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      botas_seguridad_buen_estado VARCHAR(10) CHECK (botas_seguridad_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      otros_epp_buen_estado VARCHAR(10) CHECK (otros_epp_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      etiqueta_en_buen_estado VARCHAR(10) CHECK (etiqueta_en_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      compatibilidad_sistema_proteccion VARCHAR(10) CHECK (compatibilidad_sistema_proteccion IN ('SI','NO','NA')) NOT NULL,
+      absorbedor_impacto_buen_estado VARCHAR(10) CHECK (absorbedor_impacto_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      cintas_tiras_buen_estado VARCHAR(10) CHECK (cintas_tiras_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      costuras_buen_estado VARCHAR(10) CHECK (costuras_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      indicadores_impacto_buen_estado VARCHAR(10) CHECK (indicadores_impacto_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      partes_metalicas_buen_estado VARCHAR(10) CHECK (partes_metalicas_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      sistema_cierre_automatico_buen_estado VARCHAR(10) CHECK (sistema_cierre_automatico_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      palanca_multifuncional_buen_funcionamiento VARCHAR(10) CHECK (palanca_multifuncional_buen_funcionamiento IN ('SI','NO','NA')) NOT NULL,
+      estrias_leva_libres_dano VARCHAR(10) CHECK (estrias_leva_libres_dano IN ('SI','NO','NA')) NOT NULL,
+      partes_plasticas_buen_estado VARCHAR(10) CHECK (partes_plasticas_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      guarda_cabos_funda_alma_buen_estado VARCHAR(10) CHECK (guarda_cabos_funda_alma_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      herramientas_libres_danos_visibles VARCHAR(10) CHECK (herramientas_libres_danos_visibles IN ('SI','NO','NA')) NOT NULL,
+      mangos_facil_agarre VARCHAR(10) CHECK (mangos_facil_agarre IN ('SI','NO','NA')) NOT NULL,
+      herramientas_afiladas_ajustadas VARCHAR(10) CHECK (herramientas_afiladas_ajustadas IN ('SI','NO','NA')) NOT NULL,
+      herramientas_disenadas_tarea VARCHAR(10) CHECK (herramientas_disenadas_tarea IN ('SI','NO','NA')) NOT NULL,
+      herramientas_dimensiones_correctas VARCHAR(10) CHECK (herramientas_dimensiones_correctas IN ('SI','NO','NA')) NOT NULL,
+      seguetas_bien_acopladas VARCHAR(10) CHECK (seguetas_bien_acopladas IN ('SI','NO','NA')) NOT NULL,
+      pinzas_buen_funcionamiento VARCHAR(10) CHECK (pinzas_buen_funcionamiento IN ('SI','NO','NA')) NOT NULL,
+      aislamiento_dieletrico_buen_estado VARCHAR(10) CHECK (aislamiento_dieletrico_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      apaga_equipo_para_cambio_discos VARCHAR(10) CHECK (apaga_equipo_para_cambio_discos IN ('SI','NO','NA')) NOT NULL,
+      uso_llaves_adecuadas_cambio_discos VARCHAR(10) CHECK (uso_llaves_adecuadas_cambio_discos IN ('SI','NO','NA')) NOT NULL,
+      discos_brocas_puntas_buen_estado VARCHAR(10) CHECK (discos_brocas_puntas_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      rpm_no_supera_capacidad_disco VARCHAR(10) CHECK (rpm_no_supera_capacidad_disco IN ('SI','NO','NA')) NOT NULL,
+      cables_aislamiento_doble_buen_estado VARCHAR(10) CHECK (cables_aislamiento_doble_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      conexiones_neumaticas_seguras VARCHAR(10) CHECK (conexiones_neumaticas_seguras IN ('SI','NO','NA')) NOT NULL,
+      mangueras_y_equipos_sin_fugas VARCHAR(10) CHECK (mangueras_y_equipos_sin_fugas IN ('SI','NO','NA')) NOT NULL,
+      piezas_ajustadas_correctamente VARCHAR(10) CHECK (piezas_ajustadas_correctamente IN ('SI','NO','NA')) NOT NULL,
+      tubo_escape_con_guarda_silenciador VARCHAR(10) CHECK (tubo_escape_con_guarda_silenciador IN ('SI','NO','NA')) NOT NULL,
+      guayas_pasadores_buen_estado VARCHAR(10) CHECK (guayas_pasadores_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      observaciones_generales TEXT
+    );
+  `);
 })();
 
 // Devuelve los nombres de todos los trabajadores
@@ -640,6 +790,8 @@ app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
 app.use("/gruaman/inspeccion_epcc", inspeccionEpccRouter);
 app.use("/gruaman/inspeccion_izaje", inspeccionIzajeRouter);
+app.use("/bomberman/inventariosobra", inventariosObraRouter);
+app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
 
 app.listen(3000, () =>
   console.log("✅ API corriendo en http://localhost:3000 (PostgreSQL conectado)")
