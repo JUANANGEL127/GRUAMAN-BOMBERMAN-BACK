@@ -7,15 +7,15 @@ router.post('/', async (req, res) => {
     const pool = global.db;
     const body = req.body;
 
-    // campos requeridos mínimos
-    const required = ['cliente_constructora','proyecto_constructora','fecha_servicio','nombre_operador','cargo_operador'];
+    // campos requeridos mínimos (nombres actualizados)
+    const required = ['nombre_cliente','nombre_proyecto','fecha_servicio','nombre_operador','cargo'];
     for (const f of required) {
       if (!body[f]) return res.status(400).json({ error: `Falta campo obligatorio: ${f}` });
     }
 
     const query = `
       INSERT INTO chequeo_elevador (
-        cliente_constructora, proyecto_constructora, fecha_servicio, nombre_operador, cargo_operador,
+        nombre_cliente, nombre_proyecto, fecha_servicio, nombre_operador, cargo,
         epp_completo_y_en_buen_estado, epcc_completo_y_en_buen_estado,
         estructura_equipo_buen_estado, equipo_sin_fugas_fluido, tablero_mando_buen_estado, puerta_acceso_buen_estado,
         gancho_seguridad_funciona_correctamente, plataforma_limpia_y_sin_sustancias_deslizantes, cabina_libre_de_escombros_y_aseada,
@@ -39,7 +39,7 @@ router.post('/', async (req, res) => {
     `;
 
     const values = [
-      body.cliente_constructora, body.proyecto_constructora, body.fecha_servicio, body.nombre_operador, body.cargo_operador,
+      body.nombre_cliente, body.nombre_proyecto, body.fecha_servicio, body.nombre_operador, body.cargo,
       body.epp_completo_y_en_buen_estado || 'NA', body.epcc_completo_y_en_buen_estado || 'NA',
       body.estructura_equipo_buen_estado || 'NA', body.equipo_sin_fugas_fluido || 'NA', body.tablero_mando_buen_estado || 'NA', body.puerta_acceso_buen_estado || 'NA',
       body.gancho_seguridad_funciona_correctamente || 'NA', body.plataforma_limpia_y_sin_sustancias_deslizantes || 'NA', body.cabina_libre_de_escombros_y_aseada || 'NA',

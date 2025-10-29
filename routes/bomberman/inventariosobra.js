@@ -12,9 +12,9 @@ router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
 
-  // Campos obligatorios
+  // Campos obligatorios (renombrados según petición)
   const required = [
-    "cliente_constructora", "proyecto_constructora", "fecha_registro", "nombre_operador", "cargo_operador",
+    "nombre_cliente", "nombre_proyecto", "fecha_servicio", "nombre_operador", "cargo",
     "bola_limpieza_tuberia_55_cifa", "jostick", "inyector_grasa", "caja_herramientas", "tubo_entrega_50cm_flanche_plano",
     "caneca_5_galones", "caneca_55_galones", "pimpinas_5_6_galones", "manguera_bicolor", "juego_llaves_x3_piezas",
     "pinza_picolor", "bristol_14mm", "bristol_12mm", "juego_llaves_bristol_x9", "cortafrio", "pinzas_punta",

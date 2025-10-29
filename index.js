@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import pkg from "pg";
 import formulario1Router from "./routes/gruaman/formulario1.js";
-import administradorRouter from "./routes/administrador.js";
+import administradorRouter from "./routes/adminsitrados_gruaman/administrador.js";
 import planillaBombeoRouter from "./routes/bomberman/planillabombeo.js";
 import checklistRouter from "./routes/bomberman/checklist.js";
 import permisoTrabajoRouter from "./routes/compartido/permiso_trabajo.js";
@@ -478,106 +478,13 @@ global.db = pool;
   `);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS inventario_obra (
-      id SERIAL PRIMARY KEY,
-      cliente_constructora           VARCHAR(100) NOT NULL,
-      proyecto_constructora          VARCHAR(100) NOT NULL,
-      fecha_registro                 DATE NOT NULL,
-      nombre_operador                VARCHAR(100) NOT NULL,
-      cargo_operador                 VARCHAR(100) NOT NULL,
-      bola_limpieza_tuberia_55_cifa  NUMERIC NOT NULL,
-      jostick NUMERIC NOT NULL,
-      inyector_grasa NUMERIC NOT NULL,
-      caja_herramientas NUMERIC NOT NULL,
-      tubo_entrega_50cm_flanche_plano NUMERIC NOT NULL,
-      caneca_5_galones NUMERIC NOT NULL,
-      caneca_55_galones NUMERIC NOT NULL,
-      pimpinas_5_6_galones NUMERIC NOT NULL,
-      manguera_bicolor NUMERIC NOT NULL,
-      juego_llaves_x3_piezas NUMERIC NOT NULL,
-      pinza_picolor NUMERIC NOT NULL,
-      bristol_14mm NUMERIC NOT NULL,
-      bristol_12mm NUMERIC NOT NULL,
-      juego_llaves_bristol_x9 NUMERIC NOT NULL,
-      cortafrio NUMERIC NOT NULL,
-      pinzas_punta NUMERIC NOT NULL,
-      llave_expansiva_15 NUMERIC NOT NULL,
-      maseta NUMERIC NOT NULL,
-      tubo_para_abrazadera NUMERIC NOT NULL,
-      llave_11 NUMERIC NOT NULL,
-      llave_10 NUMERIC NOT NULL,
-      llave_13 NUMERIC NOT NULL,
-      llave_14 NUMERIC NOT NULL,
-      llave_17 NUMERIC NOT NULL,
-      llave_19 NUMERIC NOT NULL,
-      llave_22 NUMERIC NOT NULL,
-      llave_24 NUMERIC NOT NULL,
-      llave_27 NUMERIC NOT NULL,
-      llave_30 NUMERIC NOT NULL,
-      llave_32 NUMERIC NOT NULL,
-      destornillador_pala_65x125mm NUMERIC NOT NULL,
-      destornillador_pala_8x150mm NUMERIC NOT NULL,
-      destornillador_pala_55x125mm NUMERIC NOT NULL,
-      destornillador_estrella_ph3x150mm NUMERIC NOT NULL,
-      destornillador_estrella_ph2x100mm NUMERIC NOT NULL,
-      destornillador_estrella_ph3x75mm NUMERIC NOT NULL,
-      cunete_grasa_5_galones NUMERIC NOT NULL,
-      bomba_concreto_pc506_309_cifa_estado VARCHAR(10) CHECK (bomba_concreto_pc506_309_cifa_estado IN ('BUENA','MALA')) NOT NULL,
-      bomba_concreto_pc506_309_cifa_observacion TEXT,
-      bomba_concreto_pc607_411_cifa_estado VARCHAR(10) CHECK (bomba_concreto_pc607_411_cifa_estado IN ('BUENA','MALA')) NOT NULL,
-      bomba_concreto_pc607_411_cifa_observacion TEXT,
-      bomba_concreto_tb30_turbosol_estado VARCHAR(10) CHECK (bomba_concreto_tb30_turbosol_estado IN ('BUENA','MALA')) NOT NULL,
-      bomba_concreto_tb30_turbosol_observacion TEXT,
-      bomba_concreto_tb50_turbosol_estado VARCHAR(10) CHECK (bomba_concreto_tb50_turbosol_estado IN ('BUENA','MALA')) NOT NULL,
-      bomba_concreto_tb50_turbosol_observacion TEXT,
-      tubo_3mt_flanche_plano_estado VARCHAR(10) CHECK (tubo_3mt_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
-      tubo_3mt_flanche_plano_observacion TEXT,
-      tubo_2mt_flanche_plano_estado VARCHAR(10) CHECK (tubo_2mt_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
-      tubo_2mt_flanche_plano_observacion TEXT,
-      tubo_1mt_flanche_plano_estado VARCHAR(10) CHECK (tubo_1mt_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
-      tubo_1mt_flanche_plano_observacion TEXT,
-      abrazadera_3_pulg_flanche_plano_estado VARCHAR(10) CHECK (abrazadera_3_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
-      abrazadera_3_pulg_flanche_plano_observacion TEXT,
-      empaque_3_pulg_flanche_plano_estado VARCHAR(10) CHECK (empaque_3_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
-      empaque_3_pulg_flanche_plano_observacion TEXT,
-      abrazadera_4_pulg_flanche_plano_estado VARCHAR(10) CHECK (abrazadera_4_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
-      abrazadera_4_pulg_flanche_plano_observacion TEXT,
-      empaque_4_pulg_flanche_plano_estado VARCHAR(10) CHECK (empaque_4_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
-      empaque_4_pulg_flanche_plano_observacion TEXT,
-      abrazadera_5_pulg_flanche_plano_estado VARCHAR(10) CHECK (abrazadera_5_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
-      abrazadera_5_pulg_flanche_plano_observacion TEXT,
-      empaque_5_pulg_flanche_plano_estado VARCHAR(10) CHECK (empaque_5_pulg_flanche_plano_estado IN ('BUENA','MALA')) NOT NULL,
-      empaque_5_pulg_flanche_plano_observacion TEXT,
-      codo_45_r1000_5_pulg_flanche_estado VARCHAR(10) CHECK (codo_45_r1000_5_pulg_flanche_estado IN ('BUENA','MALA')) NOT NULL,
-      codo_45_r1000_5_pulg_flanche_observacion TEXT,
-      codo_90_r500_5_pulg_flanche_estado VARCHAR(10) CHECK (codo_90_r500_5_pulg_flanche_estado IN ('BUENA','MALA')) NOT NULL,
-      codo_90_r500_5_pulg_flanche_observacion  TEXT,
-      codo_salida_6_pulg_turbosol_estado VARCHAR(10) CHECK (codo_salida_6_pulg_turbosol_estado IN ('BUENA','MALA')) NOT NULL,
-      codo_salida_6_pulg_turbosol_observacion  TEXT,
-      manguera_3_pulg_x10mt_estado VARCHAR(10) CHECK (manguera_3_pulg_x10mt_estado IN ('BUENA','MALA')) NOT NULL,
-      manguera_3_pulg_x10mt_observacion        TEXT,
-      manguera_5_pulg_x6mt_estado VARCHAR(10) CHECK (manguera_5_pulg_x6mt_estado IN ('BUENA','MALA')) NOT NULL,
-      manguera_5_pulg_x6mt_observacion TEXT,
-      reduccion_5_a_4_pulg_estado VARCHAR(10) CHECK (reduccion_5_a_4_pulg_estado IN ('BUENA','MALA')) NOT NULL,
-      reduccion_5_a_4_pulg_observacion TEXT,
-      valvula_guillotina_55_estado VARCHAR(10) CHECK (valvula_guillotina_55_estado IN ('BUENA','MALA')) NOT NULL,
-      valvula_guillotina_55_observacion TEXT,
-      extintor_estado VARCHAR(10) CHECK (extintor_estado IN ('BUENA','MALA')) NOT NULL,
-      extintor_observacion TEXT,
-      botiquin_estado VARCHAR(10) CHECK (botiquin_estado IN ('BUENA','MALA')) NOT NULL,
-      botiquin_observacion TEXT,
-      observaciones_generales TEXT
-    );
-  `);
-
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS inspeccion_epcc_bomberman (
       id SERIAL PRIMARY KEY,
-      cliente_constructora VARCHAR(100) NOT NULL,
-      proyecto_constructora VARCHAR(100) NOT NULL,
-      fecha_registro DATE NOT NULL,
+      nombre_cliente VARCHAR(100) NOT NULL,
+      nombre_proyecto VARCHAR(100) NOT NULL,
+      fecha_servicio DATE NOT NULL,
       nombre_operador VARCHAR(100) NOT NULL,
-      cargo_operador VARCHAR(100) NOT NULL,
+      cargo VARCHAR(100) NOT NULL,
       sintoma_malestar_fisico VARCHAR(10) CHECK (sintoma_malestar_fisico IN ('SI','NO','NA')) NOT NULL,
       uso_medicamentos_que_afecten_alerta VARCHAR(10) CHECK (uso_medicamentos_que_afecten_alerta IN ('SI','NO','NA')) NOT NULL,
       consumo_sustancias_12h VARCHAR(10) CHECK (consumo_sustancias_12h IN ('SI','NO','NA')) NOT NULL,
@@ -630,11 +537,11 @@ global.db = pool;
     CREATE TABLE IF NOT EXISTS chequeo_elevador (
       id SERIAL PRIMARY KEY,
 
-      cliente_constructora        VARCHAR(100) NOT NULL,
-      proyecto_constructora       VARCHAR(100) NOT NULL,
+      nombre_cliente              VARCHAR(100) NOT NULL,
+      nombre_proyecto             VARCHAR(100) NOT NULL,
       fecha_servicio              DATE NOT NULL,
       nombre_operador             VARCHAR(100) NOT NULL,
-      cargo_operador              VARCHAR(100) NOT NULL,
+      cargo                       VARCHAR(100) NOT NULL,
 
       epp_completo_y_en_buen_estado VARCHAR(10) CHECK (epp_completo_y_en_buen_estado IN ('SI','NO','NA')) NOT NULL,
       epcc_completo_y_en_buen_estado VARCHAR(10) CHECK (epcc_completo_y_en_buen_estado IN ('SI','NO','NA')) NOT NULL,
@@ -844,6 +751,8 @@ function deg2rad(deg) {
 // Monta los routers para las rutas específicas
 app.use("/formulario1", formulario1Router);
 app.use("/administrador", administradorRouter);
+// Exponer endpoints específicos para la UI de permisos de trabajo
+app.use("/permiso_trabajo_admin", administradorRouter);
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);

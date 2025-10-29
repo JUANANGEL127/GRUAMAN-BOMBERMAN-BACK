@@ -11,9 +11,9 @@ router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
 
-  // Campos obligatorios
+  // Campos obligatorios (nombres actualizados)
   const required = [
-    "cliente_constructora", "proyecto_constructora", "fecha_registro", "nombre_operador", "cargo_operador",
+    "nombre_cliente", "nombre_proyecto", "fecha_servicio", "nombre_operador", "cargo",
     "sintoma_malestar_fisico", "uso_medicamentos_que_afecten_alerta", "consumo_sustancias_12h", "condiciones_fisicas_tareas_criticas",
     "competencia_vigente_tarea_critica", "proteccion_cabeza_buen_estado", "proteccion_auditiva_buen_estado",
     "proteccion_visual_buen_estado", "proteccion_respiratoria_buen_estado", "guantes_proteccion_buen_estado",
@@ -34,7 +34,7 @@ router.post("/", async (req, res) => {
   if (faltantes.length) return res.status(400).json({ error: "Faltan campos requeridos", faltantes });
 
   // Normalización de campos tipo opción (SI/NO/NA)
-  const optionFields = new Set(required.filter(k => k !== "cliente_constructora" && k !== "proyecto_constructora" && k !== "fecha_registro" && k !== "nombre_operador" && k !== "cargo_operador" && k !== "observaciones_generales"));
+  const optionFields = new Set(required.filter(k => k !== "nombre_cliente" && k !== "nombre_proyecto" && k !== "fecha_servicio" && k !== "nombre_operador" && k !== "cargo" && k !== "observaciones_generales"));
   function normalizeOption(val) {
     if (val === undefined || val === null) return "NA";
     if (typeof val === "string") {
