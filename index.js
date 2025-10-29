@@ -12,6 +12,7 @@ import inspeccionEpccRouter from "./routes/gruaman/inspeccion_epcc.js";
 import inspeccionIzajeRouter from "./routes/gruaman/inspeccion_izaje.js";
 import inventariosObraRouter from "./routes/bomberman/inventariosobra.js";
 import inspeccionEpccBombermanRouter from "./routes/bomberman/inspeccion_epcc_bomberman.js";
+import chequeoElevadorRouter from "./routes/gruaman/chequeo_elevador.js";
 import fetch from 'node-fetch'; // Si usas Node < 18, instala: npm install node-fetch
 
 const { Pool } = pkg;
@@ -624,6 +625,49 @@ global.db = pool;
     );
   `);
 
+  // Tabla chequeo_elevador
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chequeo_elevador (
+      id SERIAL PRIMARY KEY,
+
+      cliente_constructora        VARCHAR(100) NOT NULL,
+      proyecto_constructora       VARCHAR(100) NOT NULL,
+      fecha_servicio              DATE NOT NULL,
+      nombre_operador             VARCHAR(100) NOT NULL,
+      cargo_operador              VARCHAR(100) NOT NULL,
+
+      epp_completo_y_en_buen_estado VARCHAR(10) CHECK (epp_completo_y_en_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      epcc_completo_y_en_buen_estado VARCHAR(10) CHECK (epcc_completo_y_en_buen_estado IN ('SI','NO','NA')) NOT NULL,
+
+      estructura_equipo_buen_estado VARCHAR(10) CHECK (estructura_equipo_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      equipo_sin_fugas_fluido VARCHAR(10) CHECK (equipo_sin_fugas_fluido IN ('SI','NO','NA')) NOT NULL,
+      tablero_mando_buen_estado VARCHAR(10) CHECK (tablero_mando_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      puerta_acceso_buen_estado VARCHAR(10) CHECK (puerta_acceso_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      gancho_seguridad_funciona_correctamente VARCHAR(10) CHECK (gancho_seguridad_funciona_correctamente IN ('SI','NO','NA')) NOT NULL,
+      plataforma_limpia_y_sin_sustancias_deslizantes VARCHAR(10) CHECK (plataforma_limpia_y_sin_sustancias_deslizantes IN ('SI','NO','NA')) NOT NULL,
+      cabina_libre_de_escombros_y_aseada VARCHAR(10) CHECK (cabina_libre_de_escombros_y_aseada IN ('SI','NO','NA')) NOT NULL,
+      cables_electricos_y_motor_buen_estado VARCHAR(10) CHECK (cables_electricos_y_motor_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      anclajes_y_arriostramientos_bien_asegurados VARCHAR(10) CHECK (anclajes_y_arriostramientos_bien_asegurados IN ('SI','NO','NA')) NOT NULL,
+      secciones_equipo_bien_acopladas VARCHAR(10) CHECK (secciones_equipo_bien_acopladas IN ('SI','NO','NA')) NOT NULL,
+      rodillos_guia_buen_estado_y_lubricados VARCHAR(10) CHECK (rodillos_guia_buen_estado_y_lubricados IN ('SI','NO','NA')) NOT NULL,
+      rieles_seguridad_techo_buen_estado VARCHAR(10) CHECK (rieles_seguridad_techo_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      plataforma_trabajo_techo_buen_estado VARCHAR(10) CHECK (plataforma_trabajo_techo_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      escalera_acceso_techo_buen_estado VARCHAR(10) CHECK (escalera_acceso_techo_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      freno_electromagnetico_buen_estado VARCHAR(10) CHECK (freno_electromagnetico_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      sistema_velocidad_calibrado_y_engranes_buen_estado VARCHAR(10) CHECK (sistema_velocidad_calibrado_y_engranes_buen_estado IN ('SI','NO','NA')) NOT NULL,
+      limitantes_superior_inferior_calibrados VARCHAR(10) CHECK (limitantes_superior_inferior_calibrados IN ('SI','NO','NA')) NOT NULL,
+
+      area_equipo_senalizada_y_demarcada VARCHAR(10) CHECK (area_equipo_senalizada_y_demarcada IN ('SI','NO','NA')) NOT NULL,
+      equipo_con_parada_emergencia VARCHAR(10) CHECK (equipo_con_parada_emergencia IN ('SI','NO','NA')) NOT NULL,
+      placa_identificacion_con_carga_maxima VARCHAR(10) CHECK (placa_identificacion_con_carga_maxima IN ('SI','NO','NA')) NOT NULL,
+      sistema_sobrecarga_funcional VARCHAR(10) CHECK (sistema_sobrecarga_funcional IN ('SI','NO','NA')) NOT NULL,
+
+      cabina_desinfectada_previamente VARCHAR(10) CHECK (cabina_desinfectada_previamente IN ('SI','NO','NA')) NOT NULL,
+
+      observaciones_generales TEXT
+    );
+  `);
+
   // Tabla para registrar llamadas a la API de WhatsApp (debug)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS wa_logs (
@@ -805,6 +849,7 @@ app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
 app.use("/gruaman/inspeccion_epcc", inspeccionEpccRouter);
 app.use("/gruaman/inspeccion_izaje", inspeccionIzajeRouter);
+app.use("/gruaman/chequeo_elevador", chequeoElevadorRouter);
 app.use("/bomberman/inventariosobra", inventariosObraRouter);
 app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
 
