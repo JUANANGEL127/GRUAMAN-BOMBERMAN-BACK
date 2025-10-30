@@ -13,13 +13,14 @@ function buildWhere(params, allowedFields) {
     const val = params[key];
     if ((val === undefined || val === '') || !allowedFields.includes(key)) continue;
     if (key === 'fecha_from') {
-      clauses.push(`fecha_servicio >= $${idx++}`);
+      // comparar solo la parte date para evitar problemas TZ
+      clauses.push(`CAST(fecha_servicio AS date) >= $${idx++}`);
       values.push(val);
     } else if (key === 'fecha_to') {
-      clauses.push(`fecha_servicio <= $${idx++}`);
+      clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`);
       values.push(val);
     } else if (key === 'fecha') {
-      clauses.push(`fecha_servicio = $${idx++}`);
+      clauses.push(`CAST(fecha_servicio AS date) = $${idx++}`);
       values.push(val);
     } else {
       // busqueda case-insensitive parcial
@@ -28,6 +29,38 @@ function buildWhere(params, allowedFields) {
     }
   }
   return { where: clauses.length ? 'WHERE ' + clauses.join(' AND ') : '', values };
+}
+
+// Helper: normaliza una entrada de fecha a YYYY-MM-DD (fecha local)
+// Acepta string "YYYY-MM-DD" o Date, evita new Date("YYYY-MM-DD") que causa shifts por TZ
+function formatDateOnly(input) {
+  if (!input) return null;
+  // Si ya es Date, formatear por partes
+  if (input instanceof Date && !Number.isNaN(input.getTime())) {
+    const d = input;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  const s = String(input).trim();
+  // Si viene en formato YYYY-MM-DD, usarlo directamente con padding seguro
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    const y = m[1];
+    const mo = String(m[2]).padStart(2, '0');
+    const da = String(m[3]).padStart(2, '0');
+    return `${y}-${mo}-${da}`;
+  }
+  // Fallback: intentar parsear y devolver fecha local (solo por compatibilidad)
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Helper: devuelve la fecha de hoy en YYYY-MM-DD
+function todayDateString() {
+  return formatDateOnly(new Date());
 }
 
 // GET /permiso_trabajo -> lista paginada
@@ -67,6 +100,10 @@ router.get('/permiso_trabajo/:id', async (req, res) => {
 router.get('/permiso_trabajo/search', async (req, res) => {
   try {
     const pool = global.db;
+    // Si se pasó fecha_from pero no fecha_to, usar hoy como fecha_to
+    if (req.query && req.query.fecha_from && !req.query.fecha_to) {
+      req.query.fecha_to = todayDateString();
+    }
     // Mapar nombres de query a columnas de la tabla permiso_trabajo
     const allowed = [
       'nombre_cliente', 'nombre_proyecto', 'fecha', 'fecha_from', 'fecha_to',
@@ -112,6 +149,10 @@ router.post('/buscar', async (req, res) => {
   try {
     const pool = global.db;
     const { nombre, cedula, obra, constructora, fecha_inicio, fecha_fin, limit = 200, offset = 0 } = req.body || {};
+    // Normalizar fechas a YYYY-MM-DD para comparaciones inclusivas
+    const startDate = formatDateOnly(fecha_inicio);
+    // si no se envía fecha_fin, usar hoy
+    const endDate = formatDateOnly(fecha_fin) || todayDateString();
 
     // Construir where dinámico — solo en tabla permiso_trabajo
     const clauses = [];
@@ -133,13 +174,14 @@ router.post('/buscar', async (req, res) => {
       clauses.push(`nombre_cliente ILIKE $${idx++}`);
       values.push(`%${constructora}%`);
     }
-    if (fecha_inicio) {
-      clauses.push(`fecha_servicio >= $${idx++}`);
-      values.push(fecha_inicio);
+    if (startDate) {
+      clauses.push(`CAST(fecha_servicio AS date) >= $${idx++}`);
+      values.push(startDate);
     }
-    if (fecha_fin) {
-      clauses.push(`fecha_servicio <= $${idx++}`);
-      values.push(fecha_fin);
+    if (endDate) {
+      // comparamos por date para incluir todo el día final independientemente del timezone
+      clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`);
+      values.push(endDate);
     }
 
     const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
@@ -234,6 +276,9 @@ router.post('/descargar', async (req, res) => {
   try {
     const pool = global.db;
     const { nombre, cedula, obra, constructora, fecha_inicio, fecha_fin, formato = 'excel', limit = 10000 } = req.body || {};
+    const startDate = formatDateOnly(fecha_inicio);
+    // si no se envía fecha_fin, usar hoy
+    const endDate = formatDateOnly(fecha_fin) || todayDateString();
 
     const clauses = [];
     const values = [];
@@ -252,20 +297,14 @@ router.post('/descargar', async (req, res) => {
       clauses.push(`nombre_cliente ILIKE $${idx++}`);
       values.push(`%${constructora}%`);
     }
-    if (fecha_inicio) {
-      clauses.push(`fecha_servicio >= $${idx++}`);
-      values.push(fecha_inicio);
+    if (startDate) {
+      clauses.push(`CAST(fecha_servicio AS date) >= $${idx++}`);
+      values.push(startDate);
     }
-    if (fecha_fin) {
-      clauses.push(`fecha_servicio <= $${idx++}`);
-      values.push(fecha_fin);
+    if (endDate) {
+      clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`);
+      values.push(endDate);
     }
-
-    const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
-    const q = await pool.query(
-      `SELECT * FROM permiso_trabajo ${where} ORDER BY id DESC LIMIT $${idx}`,
-      [...values, Math.min(50000, parseInt(limit) || 10000)]
-    );
 
     // Si piden Excel -> generar XLSX y devolver (sin generar/enviar PDF automáticamente)
     if (formato === 'excel') {

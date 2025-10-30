@@ -2,7 +2,8 @@ import express from "express";
 import cors from "cors";
 import pkg from "pg";
 import formulario1Router from "./routes/gruaman/formulario1.js";
-import administradorRouter from "./routes/adminsitrados_gruaman/administrador.js";
+import administradorRouter from "./routes/adminsitrador_gruaman/permiso_trabajo_admin.js";
+import inspeccionIzajeAdminRouter from "./routes/adminsitrador_gruaman/inspeccion_izaje_admin.js";
 import planillaBombeoRouter from "./routes/bomberman/planillabombeo.js";
 import checklistRouter from "./routes/bomberman/checklist.js";
 import permisoTrabajoRouter from "./routes/compartido/permiso_trabajo.js";
@@ -753,6 +754,8 @@ app.use("/formulario1", formulario1Router);
 app.use("/administrador", administradorRouter);
 // Exponer endpoints específicos para la UI de permisos de trabajo
 app.use("/permiso_trabajo_admin", administradorRouter);
+// Router administrativo para inspección izaje (búsqueda / descargas)
+app.use("/inspeccion_izaje_admin", inspeccionIzajeAdminRouter);
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
