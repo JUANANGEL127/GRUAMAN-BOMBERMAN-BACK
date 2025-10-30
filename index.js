@@ -16,6 +16,9 @@ import inventariosObraRouter from "./routes/bomberman/inventariosobra.js";
 import inspeccionEpccBombermanRouter from "./routes/bomberman/inspeccion_epcc_bomberman.js";
 import chequeoElevadorRouter from "./routes/gruaman/chequeo_elevador.js";
 import fetch from 'node-fetch'; // Si usas Node < 18, instala: npm install node-fetch
+import chequeoTorregruasAdminRouter from "./routes/adminsitrador_gruaman/chequeo_torregruas_admin.js";
+import chequeoElevadorAdminRouter from "./routes/adminsitrador_gruaman/chequeo_elevador_admin.js";
+import chequeoAlturasAdminRouter from "./routes/adminsitrador_gruaman/chequeo_alturas_admin.js";
 
 const { Pool } = pkg;
 const app = express();
@@ -759,6 +762,12 @@ app.use("/permiso_trabajo_admin", administradorRouter);
 app.use("/inspeccion_izaje_admin", inspeccionIzajeAdminRouter);
 // Router administrativo para inspección EPCC (búsqueda / descargas)
 app.use("/inspeccion_epcc_admins", inspeccionEPCCAdminsRouter);
+// Router administrativo para chequeo torregruas (búsqueda / descargas)
+app.use("/chequeo_torregruas_admin", chequeoTorregruasAdminRouter);
+// Router administrativo para chequeo elevador (búsqueda / descargas)
+app.use("/chequeo_elevador_admin", chequeoElevadorAdminRouter);
+// Router administrativo para chequeo alturas (búsqueda / descargas)
+app.use("/chequeo_alturas_admin", chequeoAlturasAdminRouter);
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
