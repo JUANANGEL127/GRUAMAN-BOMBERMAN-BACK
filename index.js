@@ -4,6 +4,7 @@ import pkg from "pg";
 import formulario1Router from "./routes/gruaman/formulario1.js";
 import administradorRouter from "./routes/adminsitrador_gruaman/permiso_trabajo_admin.js";
 import inspeccionIzajeAdminRouter from "./routes/adminsitrador_gruaman/inspeccion_izaje_admin.js";
+import inspeccionEPCCAdminsRouter from "./routes/adminsitrador_gruaman/inspeccion_EPCC_admins.js";
 import planillaBombeoRouter from "./routes/bomberman/planillabombeo.js";
 import checklistRouter from "./routes/bomberman/checklist.js";
 import permisoTrabajoRouter from "./routes/compartido/permiso_trabajo.js";
@@ -756,6 +757,8 @@ app.use("/administrador", administradorRouter);
 app.use("/permiso_trabajo_admin", administradorRouter);
 // Router administrativo para inspección izaje (búsqueda / descargas)
 app.use("/inspeccion_izaje_admin", inspeccionIzajeAdminRouter);
+// Router administrativo para inspección EPCC (búsqueda / descargas)
+app.use("/inspeccion_epcc_admins", inspeccionEPCCAdminsRouter);
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
