@@ -24,6 +24,7 @@ import inventariosObraAdminRouter from "./routes/administrador_bomberman/inventa
 import inspeccionEpccBombermanAdminRouter from "./routes/administrador_bomberman/inspeccion_epcc_bomberman_admin.js";
 import checklistAdminRouter from "./routes/administrador_bomberman/checklist_admin.js";
 import adminUsuariosRouter from "./routes/administrador/admin_usuarios.js";
+import adminObrasRouter from "./routes/administrador/admin_obras.js";
 
 const { Pool } = pkg;
 const app = express();
@@ -485,7 +486,8 @@ app.get("/trabajador_id", async (req, res) => {
 // Devuelve todas las obras registradas
 app.get("/obras", async (req, res) => {
   try {
-    const result = await pool.query(`SELECT id, nombre_obra, constructora FROM obras`);
+    // Cambia "activo" por "activa" para coincidir con la columna real
+    const result = await pool.query(`SELECT id, nombre_obra, constructora, empresa_id, activa FROM obras`);
     res.json({ obras: result.rows });
   } catch (error) {
     res.status(500).json({ error: "Error al obtener las obras" });
@@ -565,6 +567,8 @@ app.use("/inspeccion_epcc_bomberman_admin", inspeccionEpccBombermanAdminRouter);
 app.use("/checklist_admin", checklistAdminRouter);
 // Router para administración de usuarios
 app.use("/admin_usuarios", adminUsuariosRouter);
+// Router para administración de obras
+app.use("/admin_obras", adminObrasRouter);
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
