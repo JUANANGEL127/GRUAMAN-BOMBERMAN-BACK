@@ -23,6 +23,7 @@ import planillaBombeoAdminRouter from "./routes/administrador_bomberman/planilla
 import inventariosObraAdminRouter from "./routes/administrador_bomberman/inventarios_obra_admin.js";
 import inspeccionEpccBombermanAdminRouter from "./routes/administrador_bomberman/inspeccion_epcc_bomberman_admin.js";
 import checklistAdminRouter from "./routes/administrador_bomberman/checklist_admin.js";
+import adminUsuariosRouter from "./routes/administrador/admin_usuarios.js";
 
 const { Pool } = pkg;
 const app = express();
@@ -562,6 +563,8 @@ app.use("/inventarios_obra_admin", inventariosObraAdminRouter);
 app.use("/inspeccion_epcc_bomberman_admin", inspeccionEpccBombermanAdminRouter);
 // Router administrativo para checklist (búsqueda / descargas)
 app.use("/checklist_admin", checklistAdminRouter);
+// Router para administración de usuarios
+app.use("/admin_usuarios", adminUsuariosRouter);
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
@@ -578,7 +581,8 @@ app.listen(3000, () =>
 // Devuelve los datos básicos de todos los trabajadores
 app.get("/datos_basicos", async (req, res) => {
   try {
-    const result = await pool.query(`SELECT nombre, empresa_id, numero_identificacion FROM trabajadores`);
+    // Incluye el campo "activo" en la consulta
+    const result = await pool.query(`SELECT nombre, empresa_id, numero_identificacion, activo FROM trabajadores`);
     res.json({ datos: result.rows });
   } catch (error) {
     res.status(500).json({ error: "Error al obtener los datos básicos de trabajadores" });
@@ -599,7 +603,7 @@ app.post('/api/emergencia', async (req, res) => {
     const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBP5dIjWzYNzQBthQeJvY4X9K8CklaC5y0ZBGSaA72d2dcgZAu090ZAEx3Uz0B9hFZAYdDvOuOpQZAzwpGZAp6mfRpJU0y2CCt32lGPFG2b2WG1r6ZBoqYkiTDmXsHAgZAXqCC4FxVUPZCGo9dZCa25XNyTsWI4xFR47hoT3kxAiWe58ZBoy3KInk5eUswHfp2XUvuMoOluZCuWELLGbnbHWYctBbGhf60xvyTUmbntwZDZD';
     const destinatario = process.env.WA_DESTINATARIO || '573043660371';
 
-    const mensaje = `🚨 EMERGENCIA 🚨\nUsuario: ${usuario}\nUbicación: ${ubicacion || 'me encuentro en apuros'}`;
+    const mensaje = `🚨 TENGO UNA EMERGENCIA 🚨\nUsuario: ${usuario}\nUbicación: ${ubicacion || 'me encuentro en apuros'}`;
 
     let response;
     try {
@@ -695,5 +699,71 @@ app.get('/wa/logs', async (req, res) => {
     res.json({ logs: result.rows });
   } catch (error) {
     res.status(500).json({ error: 'Error al obtener logs de WhatsApp' });
+  }
+});
+
+// Reemplazar el handler existente por uno que reexponga status/headers/body de la WA API
+app.post('/api/emergencia', async (req, res) => {
+  try {
+    const { usuario, ubicacion } = req.body;
+
+    // Preferir variables de entorno en producción
+    //    const phoneNumberId = process.env.WA_PHONE_NUMBER_ID || '1341362294035680';
+    //    const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBP9jYXdgLTGF44YudZAcOdnDoRwV9TaqZAuJZBpsPchZAMZAtrbw6GEIjZCSZCAYLOmpNwnAZAhKUKuMnkzeTrdD6b5HRZBXF2ZBnj1yY7xYiZCgOtyvHySdvvs8lBhad0mhbsEAZBurQEKyTcuUsJPIfsCO3OZAPNXvjA9RqcloSWZBnmlgQaJWk3NVr75LjXUhNFnyaKWAiZBMJDKuFWRk6CvkMUbtiBV8vdNWZCXVuWAZDZD';
+    //    const destinatario = process.env.WA_DESTINATARIO || '573043660371';
+    // phoneNumberId = "Identificador de número de teléfono" (no el id de la cuenta)
+    const phoneNumberId = process.env.WA_PHONE_NUMBER_ID || '860177043826159';
+    const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBP5dIjWzYNzQBthQeJvY4X9K8CklaC5y0ZBGSaA72d2dcgZAu090ZAEx3Uz0B9hFZAYdDvOuOpQZAzwpGZAp6mfRpJU0y2CCt32lGPFG2b2WG1r6ZBoqYkiTDmXsHAgZAXqCC4FxVUPZCGo9dZCa25XNyTsWI4xFR47hoT3kxAiWe58ZBoy3KInk5eUswHfp2XUvuMoOluZCuWELLGbnbHWYctBbGhf60xvyTUmbntwZDZD';
+    // Enviar mensaje a varios destinatarios
+    const destinatarios = (process.env.WA_DESTINATARIO || '573043660371,573108539902,573174319739').split(',');
+
+    const mensaje = `🚨 TENGO UNA EMERGENCIA 🚨\nUsuario: ${usuario}\nUbicación: ${ubicacion || 'me encuentro en apuros'}`;
+
+    // Enviar mensaje a cada destinatario
+    for (const destinatario of destinatarios) {
+      try {
+        const response = await fetch(`https://graph.facebook.com/v17.0/${phoneNumberId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: destinatario,
+            type: 'text',
+            text: { body: mensaje },
+          }),
+        });
+        const rawText = await response.text();
+        let result;
+        try { result = JSON.parse(rawText); } catch (e) { result = { raw: rawText }; }
+        const headersObj = Object.fromEntries(response.headers.entries());
+        // Guardar log en BD (no bloqueante para la respuesta)
+        try {
+          await pool.query(
+            `INSERT INTO wa_logs (phone_number_id, destinatario, request_body, response_status, response_headers, response_body)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [
+              phoneNumberId,
+              destinatario,
+              { usuario, ubicacion, mensaje },
+              response.status,
+              headersObj,
+              result,
+            ]
+          );
+        } catch (logErr) {
+          console.error('Error guardando log WA en BD:', logErr);
+        }
+      } catch (networkErr) {
+        console.error('Network error calling WhatsApp API:', networkErr);
+      }
+    }
+
+    res.status(200).json({ success: true, message: 'Mensajes enviados a los destinatarios' });
+  } catch (error) {
+    console.error('Error al enviar mensaje WhatsApp:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
