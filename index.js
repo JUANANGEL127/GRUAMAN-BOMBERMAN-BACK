@@ -717,7 +717,7 @@ app.post('/api/emergencia', async (req, res) => {
     //    const destinatario = process.env.WA_DESTINATARIO || '573043660371';
     // phoneNumberId = "Identificador de número de teléfono" (no el id de la cuenta)
     const phoneNumberId = process.env.WA_PHONE_NUMBER_ID || '860177043826159';
-    const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBP5dIjWzYNzQBthQeJvY4X9K8CklaC5y0ZBGSaA72d2dcgZAu090ZAEx3Uz0B9hFZAYdDvOuOpQZAzwpGZAp6mfRpJU0y2CCt32lGPFG2b2WG1r6ZBoqYkiTDmXsHAgZAXqCC4FxVUPZCGo9dZCa25XNyTsWI4xFR47hoT3kxAiWe58ZBoy3KInk5eUswHfp2XUvuMoOluZCuWELLGbnbHWYctBbGhf60xvyTUmbntwZDZD';
+    const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBPZB0ZCD7vesklZBgAfu5FXb93MxlolXkUbFwYjkJ9rM7M493noEo91HQLzSDM3SPbWFAq0bejocpBhEwCZALVhaVMi1mI1Qm8JRQZC0xVYBo9V2ZCU7C35SZAMeZCK2aLeR2ZCWF6OeLB7OsH3OM40QsxiaWSDR76fgzXdnkwhI4uyoTPEZCaeOKp9fH4SqSDmYSCISLWxVgLN5DzkpkiIKePzqg7YYVWouZAs9lZAw0TdZB1DnZChoWZCKMHKoC4b1SHHFjhOWf4Lb4QpZBLlYOZAgZDZD';
     // Enviar mensaje a varios destinatarios
     const destinatarios = (process.env.WA_DESTINATARIO || '573043660371,573108539902,573174319739').split(',');
 
