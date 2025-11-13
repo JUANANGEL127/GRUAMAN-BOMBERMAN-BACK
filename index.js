@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import pkg from "pg";
+import bcrypt from "bcrypt";
 import formulario1Router from "./routes/gruaman/formulario1.js";
 import administradorRouter from "./routes/adminsitrador_gruaman/permiso_trabajo_admin.js";
 import inspeccionIzajeAdminRouter from "./routes/adminsitrador_gruaman/inspeccion_izaje_admin.js";
@@ -385,6 +386,15 @@ global.db = pool;
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // Tabla de contraseñas de administrador
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_passwords (
+      id SERIAL PRIMARY KEY,
+      password_hash VARCHAR(255) NOT NULL,
+      rol VARCHAR(30) NOT NULL CHECK (rol IN ('gruaman', 'bomberman'))
+    );
+  `);
 })();
 
 // Devuelve los nombres de todos los trabajadores
@@ -593,6 +603,25 @@ app.get("/datos_basicos", async (req, res) => {
     res.json({ datos: result.rows });
   } catch (error) {
     res.status(500).json({ error: "Error al obtener los datos básicos de trabajadores" });
+  }
+});
+
+// Endpoint de login de administrador
+app.post("/admin/login", async (req, res) => {
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ error: "Falta la contraseña" });
+
+  try {
+    const result = await pool.query("SELECT * FROM admin_passwords");
+    for (const row of result.rows) {
+      const match = await bcrypt.compare(password, row.password_hash);
+      if (match) {
+        return res.json({ success: true, rol: row.rol });
+      }
+    }
+    return res.status(401).json({ error: "Contraseña incorrecta" });
+  } catch (error) {
+    res.status(500).json({ error: "Error en el login" });
   }
 });
 
