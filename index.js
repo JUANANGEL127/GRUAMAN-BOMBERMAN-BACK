@@ -36,11 +36,13 @@ app.use("/bomberman/checklist", checklistRouter);
 
 // Configuración de la conexión a PostgreSQL
 const pool = new Pool({
-  host: "localhost",
-  user: "postgres",
-  password: "",
-  database: "postgres",
-  port: 5432,
+  host: process.env.PGHOST || "localhost",
+  user: process.env.PGUSER || "postgres",
+  password: process.env.PGPASSWORD || "",
+  database: process.env.PGDATABASE || "postgres",
+  port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
+  connectionString: process.env.DATABASE_URL, // Render suele usar esta variable
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
 });
 
 global.db = pool;
@@ -578,8 +580,9 @@ app.use("/gruaman/chequeo_elevador", chequeoElevadorRouter);
 app.use("/bomberman/inventariosobra", inventariosObraRouter);
 app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
 
-app.listen(3000, () =>
-  console.log("✅ API corriendo en http://localhost:3000 (PostgreSQL conectado)")
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () =>
+  console.log(`✅ API corriendo en http://localhost:${PORT} (PostgreSQL conectado)`)
 );
 
 // Devuelve los datos básicos de todos los trabajadores
