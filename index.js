@@ -36,15 +36,18 @@ app.use("/bomberman/planillabombeo", planillaBombeoRouter);
 app.use("/bomberman/checklist", checklistRouter);
 
 // Configuración de la conexión a PostgreSQL
-const pool = new Pool({
-  host: process.env.PGHOST || "localhost",
-  user: process.env.PGUSER || "postgres",
-  password: process.env.PGPASSWORD || "",
-  database: process.env.PGDATABASE || "postgres",
-  port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
-  connectionString: process.env.DATABASE_URL, // Render suele usar esta variable
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
-});
+const pool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }
+    })
+  : new Pool({
+      host: process.env.PGHOST || "localhost",
+      user: process.env.PGUSER || "postgres",
+      password: process.env.PGPASSWORD || "",
+      database: process.env.PGDATABASE || "postgres",
+      port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
+    });
 
 global.db = pool;
 
