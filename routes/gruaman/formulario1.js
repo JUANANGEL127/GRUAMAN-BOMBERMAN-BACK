@@ -1,57 +1,7 @@
 import { Router } from "express";
-import mysql from "mysql2/promise";
 import moment from "moment-timezone";
 
 const router = Router();
-
-// Conexión a la base de datos MySQL y creación de tablas si no existen
-let db;
-(async () => {
-  db = await mysql.createConnection({
-    host: "127.0.0.1",
-    user: "root",
-    password: "daleolamse2004",
-    database: "obra_db"
-  });
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS empresas (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      nombre VARCHAR(50) NOT NULL UNIQUE
-    );
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS obras (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      nombre_obra VARCHAR(100) NOT NULL UNIQUE
-    );
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS trabajadores (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      nombre VARCHAR(100) NOT NULL UNIQUE,
-      empresa_id INT,
-      obra_id INT,
-      numero_identificacion VARCHAR(50) UNIQUE,
-      FOREIGN KEY (empresa_id) REFERENCES empresas(id),
-      FOREIGN KEY (obra_id) REFERENCES obras(id)
-    );
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS registros_horas (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      trabajador_id INT NOT NULL,
-      fecha DATE NOT NULL,
-      hora_usuario TIME NOT NULL,
-      hora_sistema TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      tipo ENUM('entrada','salida') NOT NULL,
-      FOREIGN KEY (trabajador_id) REFERENCES trabajadores(id)
-    );
-  `);
-})();
 
 // Guarda un registro de horas para un trabajador
 router.post("/registros", async (req, res) => {
