@@ -34,7 +34,7 @@ import dotenv from "dotenv";
 if (process.env.NODE_ENV === "production") {
   dotenv.config({ path: ".env" });
 } else {
-  dotenv.config({ path: ".env.local" });
+  dotenv.config({ path: [".env.local", ".env"] }); // <-- Cambia aquí para cargar ambos archivos
 }
 
 const { Pool } = pkg;
@@ -62,6 +62,9 @@ const pool = process.env.DATABASE_URL
 global.db = pool;
 
 // Claves VAPID para web-push
+if (!process.env.VAPID_EMAIL) {
+  throw new Error('No subject set in vapidDetails.subject. Por favor define VAPID_EMAIL en tu .env o .env.local');
+}
 webpush.setVapidDetails(
   process.env.VAPID_EMAIL,
   process.env.VAPID_PUBLIC_KEY,
@@ -656,20 +659,97 @@ app.post("/admin/login", async (req, res) => {
 
 // Endpoint para guardar la suscripción push
 app.post("/push/subscribe", async (req, res) => {
-  const { trabajador_id, subscription } = req.body;
-  if (!trabajador_id || !subscription) {
-    return res.status(400).json({ error: "Faltan parámetros" });
+  const { numero_identificacion, subscription } = req.body;
+
+  // Validaciones básicas
+  if (!numero_identificacion) {
+    return res.status(400).json({ error: "Falta numero_identificacion" });
   }
+  if (subscription == null) {
+    return res.status(400).json({ error: "Falta subscription" });
+  }
+
+  // Normalizar subscription: aceptar objeto o JSON string
+  let subscriptionObj = subscription;
+  if (typeof subscription === "string") {
+    try {
+      subscriptionObj = JSON.parse(subscription);
+    } catch (err) {
+      console.error("Subscription string inválida:", subscription);
+      return res.status(400).json({ error: "subscription debe ser un objeto JSON o un string JSON válido" });
+    }
+  }
+
+  if (typeof subscriptionObj !== "object" || Array.isArray(subscriptionObj)) {
+    return res.status(400).json({ error: "Formato de subscription inválido" });
+  }
+
   try {
-    await pool.query(
-      `INSERT INTO push_subscriptions (trabajador_id, subscription) VALUES ($1, $2)
-       ON CONFLICT (trabajador_id) DO UPDATE SET subscription = EXCLUDED.subscription`,
-      [trabajador_id, subscription]
+    console.log("POST /push/subscribe payload:", { numero_identificacion, subscription: subscriptionObj });
+
+    // Buscar id del trabajador
+    const workerRes = await pool.query(
+      `SELECT id FROM trabajadores WHERE numero_identificacion = $1`,
+      [String(numero_identificacion)]
     );
-    res.json({ success: true });
+    if (workerRes.rows.length === 0) {
+      return res.status(404).json({ error: "Trabajador no encontrado" });
+    }
+    const trabajador_id = workerRes.rows[0].id;
+
+    // Intentar INSERT; si falla por duplicado, hacer UPDATE
+    try {
+      await pool.query(
+        `INSERT INTO push_subscriptions (trabajador_id, subscription) VALUES ($1, $2)`,
+        [trabajador_id, subscriptionObj]
+      );
+      return res.json({ success: true, action: "inserted" });
+    } catch (insertErr) {
+      // Duplicate key -> actualizar la suscripción existente
+      if (insertErr.code === "23505") {
+        try {
+          await pool.query(
+            `UPDATE push_subscriptions SET subscription = $1, fecha_suscripcion = COALESCE(fecha_suscripcion, CURRENT_TIMESTAMP) WHERE trabajador_id = $2`,
+            [subscriptionObj, trabajador_id]
+          );
+          return res.json({ success: true, action: "updated" });
+        } catch (updateErr) {
+          console.error("Error actualizando suscripción:", updateErr);
+          return res.status(500).json({ error: "Error actualizando suscripción", detalle: updateErr.message });
+        }
+      } else {
+        console.error("Error insertando suscripción:", insertErr);
+        return res.status(500).json({ error: "Error guardando suscripción", detalle: insertErr.message });
+      }
+    }
   } catch (error) {
-    res.status(500).json({ error: "Error guardando suscripción" });
+    console.error("Error en /push/subscribe:", error);
+    res.status(500).json({ error: "Error guardando suscripción", detalle: error.message });
   }
+});
+
+// Endpoint informativo: esquema / ejemplo para /push/subscribe
+app.get("/push/subscribe/schema", (req, res) => {
+  res.json({
+    description: "POST /push/subscribe espera JSON con numero_identificacion y subscription.",
+    contentType: "application/json",
+    bodyExample: {
+      numero_identificacion: "12345678",
+      // subscription debe ser el objeto resultante de subscription.toJSON() en el navegador
+      subscription: {
+        endpoint: "https://fcm.googleapis.com/fcm/send/....",
+        keys: {
+          p256dh: "BASE64_P256DH",
+          auth: "BASE64_AUTH"
+        }
+      }
+    },
+    frontendNotes: [
+      "En frontend: const sub = await registration.pushManager.getSubscription();",
+      "Enviar fetch(..., { headers: {'Content-Type':'application/json'}, body: JSON.stringify({ numero_identificacion, subscription: sub?.toJSON() }) })",
+      "No enviar subscription como stringified JSON dentro de otro string (evitar doble stringify)."
+    ]
+  });
 });
 
 // --- NOTIFICACIONES PUSH PROGRAMADAS ---
@@ -740,8 +820,8 @@ cron.schedule('0 14 * * *', async () => {
   }
 });
 
-// 2:40pm (hora Colombia) - Notificación de recordatorio Progreso
-cron.schedule('40 14 * * *', async () => {
+// 3:25pm (hora Colombia) - Notificación de recordatorio Progreso
+cron.schedule('25 15 * * *', async () => {
   const result = await pool.query(`
     SELECT t.id, t.nombre, ps.subscription
     FROM trabajadores t
