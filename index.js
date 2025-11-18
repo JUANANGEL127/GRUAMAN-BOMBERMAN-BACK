@@ -740,6 +740,28 @@ cron.schedule('0 14 * * *', async () => {
   }
 });
 
+// 2:40pm (hora Colombia) - Notificación de recordatorio Progreso
+cron.schedule('40 14 * * *', async () => {
+  const result = await pool.query(`
+    SELECT t.id, t.nombre, ps.subscription
+    FROM trabajadores t
+    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+  `);
+  for (const row of result.rows) {
+    try {
+      await webpush.sendNotification(
+        row.subscription,
+        JSON.stringify({
+          title: "¡Hola super heroe!",
+          body: "pasamos a recordarte que somo progreso!"
+        })
+      );
+    } catch (err) {
+      console.error("Error enviando notificación 2:40pm:", err);
+    }
+  }
+});
+
 // 5:00pm - Mensaje de cierre
 cron.schedule('0 17 * * *', async () => {
   const result = await pool.query(`
