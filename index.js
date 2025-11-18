@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import pkg from "pg";
 import bcrypt from "bcrypt";
+import webpush from "web-push";
+import cron from "node-cron";
 import formulario1Router from "./routes/gruaman/formulario1.js";
 import administradorRouter from "./routes/adminsitrador_gruaman/permiso_trabajo_admin.js";
 import inspeccionIzajeAdminRouter from "./routes/adminsitrador_gruaman/inspeccion_izaje_admin.js";
@@ -27,6 +29,14 @@ import checklistAdminRouter from "./routes/administrador_bomberman/checklist_adm
 import adminUsuariosRouter from "./routes/administrador/admin_usuarios.js";
 import adminObrasRouter from "./routes/administrador/admin_obras.js";
 
+// Cargar variables de entorno según el entorno
+import dotenv from "dotenv";
+if (process.env.NODE_ENV === "production") {
+  dotenv.config({ path: ".env" });
+} else {
+  dotenv.config({ path: ".env.local" });
+}
+
 const { Pool } = pkg;
 const app = express();
 
@@ -50,6 +60,13 @@ const pool = process.env.DATABASE_URL
     });
 
 global.db = pool;
+
+// Claves VAPID para web-push
+webpush.setVapidDetails(
+  process.env.VAPID_EMAIL,
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
+);
 
 // Creación de tablas si no existen
 (async () => {
@@ -398,6 +415,15 @@ global.db = pool;
       rol VARCHAR(30) NOT NULL CHECK (rol IN ('gruaman', 'bomberman'))
     );
   `);
+
+  // Tabla para suscripciones push
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      trabajador_id INT PRIMARY KEY,
+      subscription JSONB NOT NULL,
+      FOREIGN KEY (trabajador_id) REFERENCES trabajadores(id) ON DELETE CASCADE
+    );
+  `);
 })();
 
 // Devuelve los nombres de todos los trabajadores
@@ -628,116 +654,172 @@ app.post("/admin/login", async (req, res) => {
   }
 });
 
-// Reemplazar el handler existente por uno que reexponga status/headers/body de la WA API
-app.post('/api/emergencia', async (req, res) => {
+// Endpoint para guardar la suscripción push
+app.post("/push/subscribe", async (req, res) => {
+  const { trabajador_id, subscription } = req.body;
+  if (!trabajador_id || !subscription) {
+    return res.status(400).json({ error: "Faltan parámetros" });
+  }
   try {
-    const { usuario, ubicacion } = req.body;
-
-    // Preferir variables de entorno en producción
-    //    const phoneNumberId = process.env.WA_PHONE_NUMBER_ID || '1341362294035680';
-    //    const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBP9jYXdgLTGF44YudZAcOdnDoRwV9TaqZAuJZBpsPchZAMZAtrbw6GEIjZCSZCAYLOmpNwnAZAhKUKuMnkzeTrdD6b5HRZBXF2ZBnj1yY7xYiZCgOtyvHySdvvs8lBhad0mhbsEAZBurQEKyTcuUsJPIfsCO3OZAPNXvjA9RqcloSWZBnmlgQaJWk3NVr75LjXUhNFnyaKWAiZBMJDKuFWRk6CvkMUbtiBV8vdNWZCXVuWAZDZD';
-    //    const destinatario = process.env.WA_DESTINATARIO || '573043660371';
-    // phoneNumberId = "Identificador de número de teléfono" (no el id de la cuenta)
-    const phoneNumberId = process.env.WA_PHONE_NUMBER_ID || '860177043826159';
-    const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBP5dIjWzYNzQBthQeJvY4X9K8CklaC5y0ZBGSaA72d2dcgZAu090ZAEx3Uz0B9hFZAYdDvOuOpQZAzwpGZAp6mfRpJU0y2CCt32lGPFG2b2WG1r6ZBoqYkiTDmXsHAgZAXqCC4FxVUPZCGo9dZCa25XNyTsWI4xFR47hoT3kxAiWe58ZBoy3KInk5eUswHfp2XUvuMoOluZCuWELLGbnbHWYctBbGhf60xvyTUmbntwZDZD';
-    const destinatario = process.env.WA_DESTINATARIO || '573043660371';
-
-    const mensaje = `🚨 TENGO UNA EMERGENCIA 🚨\nUsuario: ${usuario}\nUbicación: ${ubicacion || 'me encuentro en apuros'}`;
-
-    let response;
-    try {
-      response = await fetch(`https://graph.facebook.com/v17.0/${phoneNumberId}/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: destinatario,
-          type: 'text',
-          text: { body: mensaje },
-        }),
-      });
-    } catch (networkErr) {
-      console.error('Network error calling WhatsApp API:', networkErr);
-      return res.status(502).json({ success: false, message: 'Network error contacting WhatsApp API', error: networkErr.message });
-    }
-
-    const rawText = await response.text();
-    let result;
-    try { result = JSON.parse(rawText); } catch (e) { result = { raw: rawText }; }
-
-    const headersObj = Object.fromEntries(response.headers.entries());
-
-    // Guardar log en BD (no bloqueante para la respuesta)
-    try {
-      const insert = await pool.query(
-        `INSERT INTO wa_logs (phone_number_id, destinatario, request_body, response_status, response_headers, response_body)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-        [
-          phoneNumberId,
-          destinatario,
-          { usuario, ubicacion, mensaje },
-          response.status,
-          headersObj,
-          result,
-        ]
-      );
-      const logId = insert.rows[0]?.id;
-      console.log('WA log saved id=', logId);
-    } catch (logErr) {
-      console.error('Error guardando log WA en BD:', logErr);
-    }
-
-    console.log('WA API status:', response.status, response.statusText);
-    console.log('WA API headers:', headersObj);
-    console.log('WA API body:', result);
-
-    // Manejo específico para GraphMethodException / subcode 33 (ID inválido / permisos)
-    if (result && result.error) {
-      const err = result.error;
-      if (err.type === 'GraphMethodException' && err.code === 100 && err.error_subcode === 33) {
-        return res.status(400).json({
-          success: false,
-          message: 'El phoneNumberId parece incorrecto o no tiene permisos.',
-          help: 'WA_PHONE_NUMBER_ID debe ser el "Phone number ID" del número de WhatsApp Business (no el ID de la app o negocio).',
-          action: 'Revisa Business Manager → WhatsApp → Phone numbers y usa el Phone number ID. Asegura que el token tenga permisos y que el número esté habilitado.',
-          suppliedPhoneNumberId: phoneNumberId,
-          waError: err
-        });
-      }
-
-      // Responder el error original si no es el caso anterior
-      return res.status(response.status || 400).json({
-        success: false,
-        message: 'Error de la API de WhatsApp (ver waBody)',
-        waBody: result
-      });
-    }
-
-    // Caso OK: devolver resultado
-    return res.status(200).json({
-      success: true,
-      message: 'Mensaje aceptado por la API de WhatsApp',
-      waResult: result,
-      waHeaders: headersObj
-    });
-
+    await pool.query(
+      `INSERT INTO push_subscriptions (trabajador_id, subscription) VALUES ($1, $2)
+       ON CONFLICT (trabajador_id) DO UPDATE SET subscription = EXCLUDED.subscription`,
+      [trabajador_id, subscription]
+    );
+    res.json({ success: true });
   } catch (error) {
-    console.error('Error al enviar mensaje WhatsApp:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ error: "Error guardando suscripción" });
   }
 });
 
-// Endpoint para consultar logs de WhatsApp (limit opcional)
-app.get('/wa/logs', async (req, res) => {
-  try {
-    const limit = Math.min(100, parseInt(req.query.limit) || 50);
-    const result = await pool.query(`SELECT * FROM wa_logs ORDER BY id DESC LIMIT $1`, [limit]);
-    res.json({ logs: result.rows });
-  } catch (error) {
-    res.status(500).json({ error: 'Error al obtener logs de WhatsApp' });
+// --- NOTIFICACIONES PUSH PROGRAMADAS ---
+
+// 6:30am - Saludo de buenos días
+cron.schedule('30 6 * * *', async () => {
+  const result = await pool.query(`
+    SELECT t.id, t.nombre, ps.subscription
+    FROM trabajadores t
+    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+  `);
+  for (const row of result.rows) {
+    try {
+      await webpush.sendNotification(
+        row.subscription,
+        JSON.stringify({
+          title: "¡Buenos días!",
+          body: "buenos dias super heroe, no olvides llenar todos tus permisos el dia de hoy"
+        })
+      );
+    } catch (err) {
+      console.error("Error enviando notificación 6:30am:", err);
+    }
+  }
+});
+
+// 10:00am - Mensaje motivacional
+cron.schedule('0 10 * * *', async () => {
+  const result = await pool.query(`
+    SELECT t.id, t.nombre, ps.subscription
+    FROM trabajadores t
+    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+  `);
+  for (const row of result.rows) {
+    try {
+      await webpush.sendNotification(
+        row.subscription,
+        JSON.stringify({
+          title: "¡Ánimo super héroe!",
+          body: "hola super heroe, !tu puedes!, hoy es un gran dia para construir una catedral!"
+        })
+      );
+    } catch (err) {
+      console.error("Error enviando notificación 10:00am:", err);
+    }
+  }
+});
+
+// 2:00pm - Mensaje de seguimiento
+cron.schedule('0 14 * * *', async () => {
+  const result = await pool.query(`
+    SELECT t.id, t.nombre, ps.subscription
+    FROM trabajadores t
+    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+  `);
+  for (const row of result.rows) {
+    try {
+      await webpush.sendNotification(
+        row.subscription,
+        JSON.stringify({
+          title: "¿Cómo vas?",
+          body: "como vas super heroe?, todo marchando"
+        })
+      );
+    } catch (err) {
+      console.error("Error enviando notificación 2:00pm:", err);
+    }
+  }
+});
+
+// 5:00pm - Mensaje de cierre
+cron.schedule('0 17 * * *', async () => {
+  const result = await pool.query(`
+    SELECT t.id, t.nombre, ps.subscription
+    FROM trabajadores t
+    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+  `);
+  for (const row of result.rows) {
+    try {
+      await webpush.sendNotification(
+        row.subscription,
+        JSON.stringify({
+          title: "¿Terminaste?",
+          body: "super heroe, ya terminaste todos tus registros?"
+        })
+      );
+    } catch (err) {
+      console.error("Error enviando notificación 5:00pm:", err);
+    }
+  }
+});
+
+// 4:00pm - Notificación de formularios faltantes
+cron.schedule('0 16 * * *', async () => {
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  // Define los formularios a revisar (agrega aquí los que quieras chequear)
+  const formularios = [
+    { nombre: "registro de horas", tabla: "registros_horas" },
+    { nombre: "planilla de bombeo", tabla: "planilla_bombeo" },
+    { nombre: "permiso de trabajo", tabla: "permiso_trabajo" },
+    { nombre: "chequeo de alturas", tabla: "chequeo_alturas" },
+    { nombre: "chequeo de torregruas", tabla: "chequeo_torregruas" },
+    { nombre: "inspección EPCC", tabla: "inspeccion_epcc" },
+    { nombre: "inspección izaje", tabla: "inspeccion_izaje" },
+    // Agrega más si lo necesitas
+  ];
+
+  // Obtén todos los trabajadores suscritos
+  const trabajadores = await pool.query(`
+    SELECT t.id, t.nombre, ps.subscription
+    FROM trabajadores t
+    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+  `);
+
+  for (const row of trabajadores.rows) {
+    let faltantes = [];
+    for (const form of formularios) {
+      // Verifica si el trabajador tiene registro para hoy en cada formulario
+      let existe = false;
+      try {
+        const res = await pool.query(
+          `SELECT 1 FROM ${form.tabla} WHERE 
+            (${form.tabla}.trabajador_id = $1 OR 
+             ${form.tabla}.nombre_operador = $2 OR 
+             ${form.tabla}.nombre = $2) 
+            AND fecha_servicio = $3
+            LIMIT 1`,
+          [row.id, row.nombre, hoy]
+        );
+        existe = res.rows.length > 0;
+      } catch (e) {
+        // Si la tabla no tiene esos campos, ignora el error
+      }
+      if (!existe) faltantes.push(form.nombre);
+    }
+
+    if (faltantes.length > 0) {
+      try {
+        await webpush.sendNotification(
+          row.subscription,
+          JSON.stringify({
+            title: "¡Atención super héroe!",
+            body: `super heroe, te falta ${faltantes.join(", ")} por llenar, !llenalo, tu puedes!`
+          })
+        );
+      } catch (err) {
+        console.error("Error enviando notificación 4:00pm:", err);
+      }
+    }
   }
 });
 
@@ -805,4 +887,9 @@ app.post('/api/emergencia', async (req, res) => {
     console.error('Error al enviar mensaje WhatsApp:', error);
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// Endpoint para obtener la clave pública VAPID
+app.get('/vapid-public-key', (req, res) => {
+  res.type('text/plain').send(process.env.VAPID_PUBLIC_KEY);
 });
