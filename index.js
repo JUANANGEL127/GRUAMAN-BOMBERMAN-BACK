@@ -4,7 +4,6 @@ import pkg from "pg";
 import bcrypt from "bcrypt";
 import webpush from "web-push";
 import cron from "node-cron";
-import formulario1Router from "./routes/gruaman/formulario1.js";
 import administradorRouter from "./routes/adminsitrador_gruaman/permiso_trabajo_admin.js";
 import inspeccionIzajeAdminRouter from "./routes/adminsitrador_gruaman/inspeccion_izaje_admin.js";
 import inspeccionEPCCAdminsRouter from "./routes/adminsitrador_gruaman/inspeccion_EPCC_admins.js";
@@ -28,6 +27,7 @@ import inspeccionEpccBombermanAdminRouter from "./routes/administrador_bomberman
 import checklistAdminRouter from "./routes/administrador_bomberman/checklist_admin.js";
 import adminUsuariosRouter from "./routes/administrador/admin_usuarios.js";
 import adminObrasRouter from "./routes/administrador/admin_obras.js";
+import adminHorasExtraRouter from './routes/administrador/admin_horas_extra.js';
 
 // Cargar variables de entorno según el entorno
 import dotenv from "dotenv";
@@ -61,16 +61,6 @@ const pool = process.env.DATABASE_URL
 
 global.db = pool;
 
-// Claves VAPID para web-push
-if (!process.env.VAPID_EMAIL) {
-  throw new Error('No subject set in vapidDetails.subject. Por favor define VAPID_EMAIL en tu .env o .env.local');
-}
-webpush.setVapidDetails(
-  process.env.VAPID_EMAIL,
-  process.env.VAPID_PUBLIC_KEY,
-  process.env.VAPID_PRIVATE_KEY
-);
-
 // Creación de tablas si no existen
 (async () => {
   await pool.query(`
@@ -100,15 +90,31 @@ webpush.setVapidDetails(
     );
   `);
 
+  // --- ELIMINADO: registros_horas ---
+  // await pool.query(`
+  //   CREATE TABLE IF NOT EXISTS registros_horas (
+  //     id SERIAL PRIMARY KEY,
+  //     trabajador_id INT NOT NULL REFERENCES trabajadores(id) ON DELETE CASCADE,
+  //     fecha DATE NOT NULL,
+  //     turno TEXT CHECK (turno IN ('mañana', 'tarde')) NOT NULL,
+  //     hora_usuario TIME NOT NULL,
+  //     hora_sistema TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  //     tipo TEXT CHECK (tipo IN ('entrada', 'salida')) NOT NULL
+  //   );
+  // `);
+
+  // --- NUEVA TABLA horas_jornada ---
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS registros_horas (
-      id SERIAL PRIMARY KEY,
-      trabajador_id INT NOT NULL REFERENCES trabajadores(id) ON DELETE CASCADE,
-      fecha DATE NOT NULL,
-      turno TEXT CHECK (turno IN ('mañana', 'tarde')) NOT NULL,
-      hora_usuario TIME NOT NULL,
-      hora_sistema TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      tipo TEXT CHECK (tipo IN ('entrada', 'salida')) NOT NULL
+    CREATE TABLE IF NOT EXISTS horas_jornada (
+      nombre_cliente VARCHAR(100) NOT NULL,
+      nombre_proyecto VARCHAR(150) NOT NULL,
+      fecha_servicio DATE NOT NULL,
+      nombre_operador VARCHAR(100) NOT NULL,
+      cargo VARCHAR(100) NOT NULL,
+      empresa_id INT REFERENCES empresas(id),
+      hora_ingreso TIME NOT NULL,
+      hora_salida TIME NOT NULL,
+      minutos_almuerzo INT CHECK (minutos_almuerzo >= 1 AND minutos_almuerzo <= 60)
     );
   `);
 
@@ -427,6 +433,29 @@ webpush.setVapidDetails(
       FOREIGN KEY (trabajador_id) REFERENCES trabajadores(id) ON DELETE CASCADE
     );
   `);
+
+  // --- NUEVA TABLA PARA HORAS DE JORNADA ---
+  await pool.query(`
+  CREATE TABLE IF NOT EXISTS horas_jornada (
+  nombre_cliente VARCHAR(100) NOT NULL,
+  nombre_proyecto VARCHAR(150) NOT NULL,
+  fecha_servicio DATE NOT NULL,
+  nombre_operador VARCHAR(100) NOT NULL,
+  cargo VARCHAR(100) NOT NULL,
+  empresa_id INT REFERENCES empresas(id),
+  hora_ingreso TIME NOT NULL,
+  hora_salida TIME NOT NULL,
+  minutos_almuerzo INT CHECK (minutos_almuerzo >= 1 AND minutos_almuerzo <= 60)
+);`);
+
+  // IMPORTA Y USA EL ROUTER DESPUÉS DE global.db Y DESPUÉS DE LA CREACIÓN DE TABLAS:
+  const { default: adminHorasExtraRouter } = await import("./routes/administrador/admin_horas_extra.js");
+  app.use("/administrador/admin_horas_extra", adminHorasExtraRouter);
+
+  const { default: horaJornadaRouter } = await import("./routes/compartido/hora_llegada_salida.js");
+  app.use("/horas_jornada", horaJornadaRouter);
+
+  // ...puedes agregar aquí otros routers que dependan de global.db si es necesario...
 })();
 
 // Devuelve los nombres de todos los trabajadores
@@ -589,7 +618,6 @@ function deg2rad(deg) {
 }
 
 // Monta los routers para las rutas específicas
-app.use("/formulario1", formulario1Router);
 app.use("/administrador", administradorRouter);
 // Exponer endpoints específicos para la UI de permisos de trabajo
 app.use("/permiso_trabajo_admin", administradorRouter);
@@ -613,6 +641,7 @@ app.use("/checklist_admin", checklistAdminRouter);
 app.use("/admin_usuarios", adminUsuariosRouter);
 // Router para administración de obras
 app.use("/admin_obras", adminObrasRouter);
+app.use("/administrador/admin_horas_extra", adminHorasExtraRouter);
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
@@ -621,6 +650,10 @@ app.use("/gruaman/inspeccion_izaje", inspeccionIzajeRouter);
 app.use("/gruaman/chequeo_elevador", chequeoElevadorRouter);
 app.use("/bomberman/inventariosobra", inventariosObraRouter);
 app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
+
+// IMPORTA Y USA EL ROUTER DESPUÉS DE global.db Y DESPUÉS DE LA CREACIÓN DE TABLAS:
+const { default: horaJornadaRouter } = await import("./routes/compartido/hora_llegada_salida.js");
+app.use("/horas_jornada", horaJornadaRouter);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
