@@ -1017,7 +1017,12 @@ app.post('/api/emergencia', async (req, res) => {
       }
     }
 
-    res.status(200).json({ success: true, message: 'Mensajes enviados a los destinatarios' });
+    // Además, responde con el número para llamada rápida en el front
+    res.status(200).json({
+      success: true,
+      message: 'Mensajes enviados a los destinatarios',
+      telefono_sos: '573043660371' // número para llamada directa
+    });
   } catch (error) {
     console.error('Error al enviar mensaje WhatsApp:', error);
     res.status(500).json({ success: false, error: error.message });
