@@ -1,7 +1,9 @@
 import express from 'express';
 import ExcelJS from 'exceljs';
-import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
+import fs from 'fs';
+import path from 'path';
+import libre from 'libreoffice-convert';
 const router = express.Router();
 
 // Helper: formatea string "YYYY-MM-DD" de forma segura (evita shift TZ)
@@ -144,42 +146,62 @@ router.post('/buscar', async (req, res) => {
   }
 });
 
-// genera PDF de una inspección en una sola hoja (Buffer)
+// genera PDF de una inspección usando SOLO el template, si no existe lanza error
 async function generarPDFPorChecklist(r) {
-  return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument({ margin: 30, size: 'A4' });
-      const bufs = [];
-      doc.on('data', b => bufs.push(b));
-      doc.on('end', () => resolve(Buffer.concat(bufs)));
+  try {
+    const candidatePaths = [
+      path.join(process.cwd(), 'templates', 'checklist_admin_template.xlsx'),
+      path.join(process.cwd(), 'routes', 'templates', 'checklist_admin_template.xlsx'),
+      path.join(process.cwd(), 'routes', 'administrador_bomberman', 'templates', 'checklist_admin_template.xlsx')
+    ];
+    const tplPath = candidatePaths.find(p => fs.existsSync(p));
+    if (!tplPath) throw new Error('Template XLSX no encontrado en ninguna ruta esperada.');
 
-      doc.fontSize(16).text(`Checklist Bombeo - ID: ${r.id}`, { align: 'center' });
-      doc.moveDown();
-      doc.fontSize(12).text(`Fecha: ${r.fecha_servicio ? (new Date(r.fecha_servicio)).toISOString().slice(0,10) : ''}`);
-      doc.text(`Cliente: ${r.nombre_cliente || ''}`);
-      doc.text(`Proyecto: ${r.nombre_proyecto || ''}`);
-      doc.text(`Operador: ${r.nombre_operador || ''}`);
-      doc.text(`Bomba: ${r.bomba_numero || ''}`);
-      doc.moveDown();
-      // Solo mostrar campos REGULAR/MALO y sus observaciones
-      Object.entries(r).forEach(([k, v]) => {
-        if (
-          typeof v === "string" &&
-          ["REGULAR", "MALO"].includes(v.toUpperCase())
-        ) {
-          doc.fontSize(11).text(`${k.replace(/_/g,' ')}: ${v}`);
-          // mostrar observación si existe
-          const obsKey = k + "_observacion";
-          if (r[obsKey]) doc.fontSize(11).text(`${obsKey.replace(/_/g,' ')}: ${r[obsKey]}`);
-        }
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(tplPath);
+
+    const data = {};
+    Object.keys(r).forEach(k => {
+      let v = r[k];
+      if (k === 'fecha_servicio') v = v ? (new Date(v)).toISOString().slice(0,10) : '';
+      else if (v === null || v === undefined) v = '';
+      else if (typeof v === 'object') { try { v = JSON.stringify(v); } catch(e){ v = String(v); } }
+      data[k] = String(v);
+    });
+    workbook.eachSheet(sheet => {
+      sheet.eachRow(row => {
+        row.eachCell(cell => {
+          if (typeof cell.value === 'string') {
+            cell.value = cell.value.replace(/{{\s*([\w]+)\s*}}/g, (m, p1) => (data[p1] !== undefined ? data[p1] : ''));
+          } else if (cell.value && typeof cell.value === 'object' && cell.value.richText) {
+            const txt = cell.value.richText.map(t => t.text).join('');
+            const replaced = txt.replace(/{{\s*([\w]+)\s*}}/g, (m, p1) => (data[p1] !== undefined ? data[p1] : ''));
+            cell.value = replaced;
+          }
+        });
       });
-      doc.end();
-    } catch (err) { reject(err); }
-  });
+    });
+
+    const xlsxBuf = await workbook.xlsx.writeBuffer();
+
+    process.env.LIBREOFFICE_PATH = process.env.LIBREOFFICE_PATH || "/Applications/LibreOffice.app/Contents/MacOS/soffice";
+    const pdfBuf = await new Promise((resolve, reject) => {
+      libre.convert(xlsxBuf, '.pdf', undefined, (err, done) => {
+        if (err) return reject(err);
+        resolve(done);
+      });
+    });
+
+    return pdfBuf;
+  } catch (err) {
+    console.error('Error en generarPDFPorChecklist:', err);
+    throw err;
+  }
 }
 
 // POST /descargar -> genera XLSX o ZIP de PDFs
-router.post('/descargar', async (req, res) => {
+// Acepta tanto /descargar como /checklist_admin/descargar para compatibilidad con el front
+router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
   try {
     const pool = global.db;
     const { nombre, cedula, obra, constructora, fecha_inicio, fecha_fin, formato = 'excel', limit = 10000 } = req.body || {};
@@ -196,7 +218,6 @@ router.post('/descargar', async (req, res) => {
     if (endDate) { clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`); values.push(endDate); }
 
     const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
-    // Cambia lista_chequeo por checklist
     const q = await pool.query(`SELECT * FROM checklist ${where} ORDER BY id DESC LIMIT $${idx}`, [...values, Math.min(50000, parseInt(limit) || 10000)]);
 
     // Solo mostrar registros que tengan al menos un campo REGULAR/MALO
@@ -232,44 +253,69 @@ router.post('/descargar', async (req, res) => {
     const filtrados = q.rows.map(filtraChecklist).filter(r => r !== null);
 
     if (formato === 'excel') {
+      // --- CAMBIO: Usar SIEMPRE el template si existe, y rellenar con los datos del primer registro ---
+      const tplPath = path.join(process.cwd(), 'templates', 'checklist_admin_template.xlsx');
       const workbook = new ExcelJS.Workbook();
-      const ws = workbook.addWorksheet('Checklist Bombeo');
-
-      if (!filtrados || filtrados.length === 0) {
-        res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition','attachment; filename=checklist.xlsx');
-        await workbook.xlsx.write(res);
-        return res.end();
-      }
-
-      const keys = Object.keys(filtrados[0]);
-      ws.columns = keys.map(k => ({
-        header: k.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
-        key: k,
-        width: 20
-      }));
-
-      filtrados.forEach(r => {
-        const rowObj = {};
-        keys.forEach(k => {
-          let val = r[k];
-          if (k === 'fecha_servicio') {
-            val = val ? (new Date(val)).toISOString().slice(0,10) : '';
-          } else if (val === null || val === undefined) {
-            val = '';
-          } else if (typeof val === 'object') {
-            try { val = JSON.stringify(val); } catch (e) { val = String(val); }
-          }
-          rowObj[k] = val;
+      let usedTemplate = false;
+      if (fs.existsSync(tplPath) && filtrados.length > 0) {
+        await workbook.xlsx.readFile(tplPath);
+        const data = {};
+        Object.keys(filtrados[0]).forEach(k => {
+          let v = filtrados[0][k];
+          if (k === 'fecha_servicio') v = v ? (new Date(v)).toISOString().slice(0,10) : '';
+          else if (v === null || v === undefined) v = '';
+          else if (typeof v === 'object') { try { v = JSON.stringify(v); } catch(e){ v = String(v); } }
+          data[k] = String(v);
         });
-        ws.addRow(rowObj);
-      });
-
-      ws.columns.forEach(col => {
-        if (!col.width || col.width < 12) col.width = 12;
-        if (col.width > 60) col.width = 60;
-      });
-
+        workbook.eachSheet(sheet => {
+          sheet.eachRow(row => {
+            row.eachCell(cell => {
+              if (typeof cell.value === 'string') {
+                cell.value = cell.value.replace(/{{\s*([\w]+)\s*}}/g, (m, p1) => (data[p1] !== undefined ? data[p1] : ''));
+              } else if (cell.value && typeof cell.value === 'object' && cell.value.richText) {
+                const txt = cell.value.richText.map(t => t.text).join('');
+                const replaced = txt.replace(/{{\s*([\w]+)\s*}}/g, (m, p1) => (data[p1] !== undefined ? data[p1] : ''));
+                cell.value = replaced;
+              }
+            });
+          });
+        });
+        usedTemplate = true;
+      } else {
+        // fallback plano
+        const ws = workbook.addWorksheet('Checklist Bombeo');
+        if (!filtrados || filtrados.length === 0) {
+          res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+          res.setHeader('Content-Disposition','attachment; filename=checklist.xlsx');
+          await workbook.xlsx.write(res);
+          return res.end();
+        }
+        const keys = Object.keys(filtrados[0]);
+        ws.columns = keys.map(k => ({
+          header: k.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
+          key: k,
+          width: 20
+        }));
+        filtrados.forEach(r => {
+          const rowObj = {};
+          keys.forEach(k => {
+            let val = r[k];
+            if (k === 'fecha_servicio') {
+              val = val ? (new Date(val)).toISOString().slice(0,10) : '';
+            } else if (val === null || val === undefined) {
+              val = '';
+            } else if (typeof val === 'object') {
+              try { val = JSON.stringify(val); } catch (e) { val = String(val); }
+            }
+            rowObj[k] = val;
+          });
+          ws.addRow(rowObj);
+        });
+        ws.columns.forEach(col => {
+          if (!col.width || col.width < 12) col.width = 12;
+          if (col.width > 60) col.width = 60;
+        });
+      }
       res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition','attachment; filename=checklist.xlsx');
       await workbook.xlsx.write(res);
@@ -285,6 +331,7 @@ router.post('/descargar', async (req, res) => {
       archive.pipe(res);
       for (const r of filtrados) {
         try {
+          // SOLO usar generarPDFPorChecklist (que usa libreoffice y el template)
           const pdfBuf = await generarPDFPorChecklist(r);
           archive.append(pdfBuf, { name: `checklist_${r.id}.pdf` });
         } catch (pdfErr) {
