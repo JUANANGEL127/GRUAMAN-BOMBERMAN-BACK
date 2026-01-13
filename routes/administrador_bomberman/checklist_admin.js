@@ -4,6 +4,8 @@ import archiver from 'archiver';
 import fs from 'fs';
 import path from 'path';
 import libre from 'libreoffice-convert';
+import dotenv from 'dotenv';
+dotenv.config();
 const router = express.Router();
 
 // Helper: formatea string "YYYY-MM-DD" de forma segura (evita shift TZ)
@@ -185,6 +187,11 @@ async function generarPDFPorChecklist(r) {
     const xlsxBuf = await workbook.xlsx.writeBuffer();
 
     process.env.LIBREOFFICE_PATH = process.env.LIBREOFFICE_PATH || "/Applications/LibreOffice.app/Contents/MacOS/soffice";
+    // Antes de llamar a libre.convert, verifica si el binario existe
+    const sofficePath = process.env.LIBREOFFICE_PATH || "/Applications/LibreOffice.app/Contents/MacOS/soffice";
+    if (!fs.existsSync(sofficePath)) {
+      throw new Error('LibreOffice (soffice) no está instalado en el entorno. No es posible generar PDF con layout en Render.');
+    }
     const pdfBuf = await new Promise((resolve, reject) => {
       libre.convert(xlsxBuf, '.pdf', undefined, (err, done) => {
         if (err) return reject(err);
