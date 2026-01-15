@@ -37,6 +37,13 @@ if (process.env.NODE_ENV === "production") {
   dotenv.config({ path: [".env.local", ".env"] }); // <-- Cambia aquí para cargar ambos archivos
 }
 
+// Configuración de claves VAPID para notificaciones push
+webpush.setVapidDetails(
+  process.env.VAPID_EMAIL,
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
+);
+
 const { Pool } = pkg;
 const app = express();
 
@@ -402,19 +409,6 @@ global.db = pool;
     );
   `);
 
-  // Tabla para registrar llamadas a la API de WhatsApp (debug)
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS wa_logs (
-      id SERIAL PRIMARY KEY,
-      phone_number_id VARCHAR(50),
-      destinatario VARCHAR(50),
-      request_body JSONB,
-      response_status INT,
-      response_headers JSONB,
-      response_body JSONB,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
 
   // Tabla de contraseñas de administrador
   await pool.query(`
@@ -447,6 +441,37 @@ global.db = pool;
   hora_salida TIME NOT NULL,
   minutos_almuerzo INT CHECK (minutos_almuerzo >= 1 AND minutos_almuerzo <= 60)
 );`);
+// Endpoint para enviar una notificación push manualmente (pruebas)
+app.post("/push/test", async (req, res) => {
+  const { numero_identificacion, title, body } = req.body;
+  if (!numero_identificacion || !title || !body) {
+    return res.status(400).json({ error: "Faltan parámetros obligatorios (numero_identificacion, title, body)" });
+  }
+  try {
+    // Buscar la suscripción del trabajador
+    const workerRes = await pool.query(
+      `SELECT ps.subscription FROM trabajadores t JOIN push_subscriptions ps ON ps.trabajador_id = t.id WHERE t.numero_identificacion = $1`,
+      [String(numero_identificacion)]
+    );
+    if (workerRes.rows.length === 0) {
+      return res.status(404).json({ error: "Suscripción no encontrada para ese trabajador" });
+    }
+    const subscription = workerRes.rows[0].subscription;
+    try {
+      await webpush.sendNotification(
+        subscription,
+        JSON.stringify({ title, body })
+      );
+      return res.json({ success: true, message: "Notificación enviada" });
+    } catch (err) {
+      console.error("Error enviando notificación de prueba:", err);
+      return res.status(500).json({ error: "Error enviando notificación", detalle: err.message });
+    }
+  } catch (error) {
+    console.error("Error en /push/test:", error);
+    return res.status(500).json({ error: "Error interno", detalle: error.message });
+  }
+});
 
   // IMPORTA Y USA EL ROUTER DESPUÉS DE global.db Y DESPUÉS DE LA CREACIÓN DE TABLAS:
   const { default: adminHorasExtraRouter } = await import("./routes/administrador/admin_horas_extra.js");
@@ -958,76 +983,6 @@ cron.schedule('0 16 * * *', async () => {
   }
 });
 
-// Reemplazar el handler existente por uno que reexponga status/headers/body de la WA API
-app.post('/api/emergencia', async (req, res) => {
-  try {
-    const { usuario, ubicacion } = req.body;
-
-    // Preferir variables de entorno en producción
-    //    const phoneNumberId = process.env.WA_PHONE_NUMBER_ID || '1341362294035680';
-    //    const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBP9jYXdgLTGF44YudZAcOdnDoRwV9TaqZAuJZBpsPchZAMZAtrbw6GEIjZCSZCAYLOmpNwnAZAhKUKuMnkzeTrdD6b5HRZBXF2ZBnj1yY7xYiZCgOtyvHySdvvs8lBhad0mhbsEAZBurQEKyTcuUsJPIfsCO3OZAPNXvjA9RqcloSWZBnmlgQaJWk3NVr75LjXUhNFnyaKWAiZBMJDKuFWRk6CvkMUbtiBV8vdNWZCXVuWAZDZD';
-    //    const destinatario = process.env.WA_DESTINATARIO || '573043660371';
-    // phoneNumberId = "Identificador de número de teléfono" (no el id de la cuenta)
-    const phoneNumberId = process.env.WA_PHONE_NUMBER_ID || '860177043826159';
-    const token = process.env.WA_TOKEN || 'EAAmE8C4xTwgBPZB0ZCD7vesklZBgAfu5FXb93MxlolXkUbFwYjkJ9rM7M493noEo91HQLzSDM3SPbWFAq0bejocpBhEwCZALVhaVMi1mI1Qm8JRQZC0xVYBo9V2ZCU7C35SZAMeZCK2aLeR2ZCWF6OeLB7OsH3OM40QsxiaWSDR76fgzXdnkwhI4uyoTPEZCaeOKp9fH4SqSDmYSCISLWxVgLN5DzkpkiIKePzqg7YYVWouZAs9lZAw0TdZB1DnZChoWZCKMHKoC4b1SHHFjhOWf4Lb4QpZBLlYOZAgZDZD';
-    // Enviar mensaje a varios destinatarios
-    const destinatarios = (process.env.WA_DESTINATARIO || '573043660371,573108539902,573174319739').split(',');
-
-    const mensaje = `🚨 TENGO UNA EMERGENCIA 🚨\nUsuario: ${usuario}\nUbicación: ${ubicacion || 'me encuentro en apuros'}`;
-
-    // Enviar mensaje a cada destinatario
-    for (const destinatario of destinatarios) {
-      try {
-        const response = await fetch(`https://graph.facebook.com/v17.0/${phoneNumberId}/messages`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: destinatario,
-            type: 'text',
-            text: { body: mensaje },
-          }),
-        });
-        const rawText = await response.text();
-        let result;
-        try { result = JSON.parse(rawText); } catch (e) { result = { raw: rawText }; }
-        const headersObj = Object.fromEntries(response.headers.entries());
-        // Guardar log en BD (no bloqueante para la respuesta)
-        try {
-          await pool.query(
-            `INSERT INTO wa_logs (phone_number_id, destinatario, request_body, response_status, response_headers, response_body)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [
-              phoneNumberId,
-              destinatario,
-              { usuario, ubicacion, mensaje },
-              response.status,
-              headersObj,
-              result,
-            ]
-          );
-        } catch (logErr) {
-          console.error('Error guardando log WA en BD:', logErr);
-        }
-      } catch (networkErr) {
-        console.error('Network error calling WhatsApp API:', networkErr);
-      }
-    }
-
-    // Además, responde con el número para llamada rápida en el front
-    res.status(200).json({
-      success: true,
-      message: 'Mensajes enviados a los destinatarios',
-      telefono_sos: '573183485318' // número para llamada directa
-    });
-  } catch (error) {
-    console.error('Error al enviar mensaje WhatsApp:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
 // Endpoint para obtener la clave pública VAPID
 app.get('/vapid-public-key', (req, res) => {
