@@ -460,7 +460,11 @@ app.post("/push/test", async (req, res) => {
     try {
       await webpush.sendNotification(
         subscription,
-        JSON.stringify({ title, body })
+        JSON.stringify({
+          title,
+          body,
+          icon: "/icon-192.png"
+        })
       );
       return res.json({ success: true, message: "Notificación enviada" });
     } catch (err) {
@@ -825,7 +829,8 @@ cron.schedule('30 6 * * *', async () => {
         row.subscription,
         JSON.stringify({
           title: "¡Buenos días!",
-          body: "buenos dias super heroe, no olvides llenar todos tus permisos el dia de hoy"
+          body: "buenos dias super heroe, no olvides llenar todos tus permisos el dia de hoy",
+          icon: "/icon-192.png"
         })
       );
     } catch (err) {
@@ -847,7 +852,8 @@ cron.schedule('0 10 * * *', async () => {
         row.subscription,
         JSON.stringify({
           title: "¡Ánimo super héroe!",
-          body: "hola super heroe, !tu puedes!, hoy es un gran dia para construir una catedral!"
+          body: "hola super heroe, !tu puedes!, hoy es un gran dia para construir una catedral!",
+          icon: "/icon-192.png"
         })
       );
     } catch (err) {
@@ -869,7 +875,8 @@ cron.schedule('0 14 * * *', async () => {
         row.subscription,
         JSON.stringify({
           title: "¿Cómo vas?",
-          body: "como vas super heroe?, todo marchando"
+          body: "como vas super heroe?, todo marchando",
+          icon: "/icon-192.png"
         })
       );
     } catch (err) {
@@ -891,7 +898,8 @@ cron.schedule('25 15 * * *', async () => {
         row.subscription,
         JSON.stringify({
           title: "¡Hola super heroe!",
-          body: "pasamos a recordarte que somo progreso!"
+          body: "pasamos a recordarte que somo progreso!",
+          icon: "/icon-192.png"
         })
       );
     } catch (err) {
@@ -913,7 +921,8 @@ cron.schedule('0 17 * * *', async () => {
         row.subscription,
         JSON.stringify({
           title: "¿Terminaste?",
-          body: "super heroe, ya terminaste todos tus registros?"
+          body: "super heroe, ya terminaste todos tus registros?",
+          icon: "/icon-192.png"
         })
       );
     } catch (err) {
@@ -973,7 +982,8 @@ cron.schedule('0 16 * * *', async () => {
           row.subscription,
           JSON.stringify({
             title: "¡Atención super héroe!",
-            body: `super heroe, te falta ${faltantes.join(", ")} por llenar, !llenalo, tu puedes!`
+            body: `super heroe, te falta ${faltantes.join(", ")} por llenar, !llenalo, tu puedes!`,
+            icon: "/icon-192.png"
           })
         );
       } catch (err) {
