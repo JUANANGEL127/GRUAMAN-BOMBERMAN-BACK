@@ -121,17 +121,18 @@ router.post("/register/verify", async (req, res) => {
     console.log('[WebAuthn] Registro no verificado:', verification);
     return res.status(400).json({ error: "Registro no verificado" });
   }
-  const { credentialID, credentialPublicKey, counter, authenticatorAttachment } = verification.registrationInfo;
+  const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo;
+  const { id: credentialID, publicKey: credentialPublicKey, counter } = credential;
   try {
     await db.query(
       `INSERT INTO webauthn_credenciales (numero_identificacion, credential_id, public_key, sign_count, tipo_autenticador)
        VALUES ($1, $2, $3, $4, $5)`,
       [
         numero_identificacion,
-        base64url.encode(credentialID),
-        credentialPublicKey.toString("base64"),
+        credentialID, // Ya viene como base64url string en v13+
+        Buffer.from(credentialPublicKey).toString("base64"),
         counter,
-        authenticatorAttachment || null
+        credentialDeviceType || null
       ]
     );
     console.log('[WebAuthn] Credencial guardada en la base de datos');
@@ -158,7 +159,7 @@ router.post("/authenticate/options", async (req, res) => {
     rpID,
     userVerification: "preferred",
     allowCredentials: credenciales.map(c => ({
-      id: base64url.toBuffer(c.credential_id),
+      id: c.credential_id, // Ya es base64url string
       type: "public-key"
     }))
   });
@@ -182,7 +183,7 @@ router.post("/authenticate/verify", async (req, res) => {
     return res.status(400).json({ error: "No hay challenge para este usuario" });
   }
   // Busca la credencial por credential_id
-  const credential = credenciales.find(c => base64url.encode(assertionResponse.rawId) === c.credential_id);
+  const credential = credenciales.find(c => assertionResponse.id === c.credential_id);
   if (!credential) {
     return res.status(404).json({ error: "Credencial no encontrada" });
   }
@@ -193,9 +194,9 @@ router.post("/authenticate/verify", async (req, res) => {
       expectedChallenge,
       expectedOrigin: origin,
       expectedRPID: rpID,
-      authenticator: {
-        credentialID: base64url.toBuffer(credential.credential_id),
-        credentialPublicKey: Buffer.from(credential.public_key, "base64"),
+      credential: {
+        id: credential.credential_id, // Ya es base64url string
+        publicKey: Buffer.from(credential.public_key, "base64"),
         counter: credential.sign_count,
         transports: ["internal"]
       }
