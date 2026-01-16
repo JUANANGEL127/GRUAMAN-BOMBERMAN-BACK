@@ -3,6 +3,13 @@ import util from "util";
 import base64url from "base64url";
 const router = express.Router();
 
+// Función para asegurar que un string esté en formato base64url
+function ensureBase64url(str) {
+  if (!str) return str;
+  // Reemplazar caracteres base64 estándar por base64url y eliminar padding
+  return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 // Verifica si el usuario tiene credencial biométrica registrada
 router.post('/hasCredential', async (req, res) => {
   const { numero_identificacion } = req.body;
@@ -98,6 +105,15 @@ router.post("/register/verify", async (req, res) => {
     console.log('[WebAuthn] /register/verify error: Faltan datos');
     return res.status(400).json({ error: "Faltan datos" });
   }
+  
+  // Asegurar que los IDs estén en formato base64url
+  const sanitizedResponse = {
+    ...attestationResponse,
+    id: ensureBase64url(attestationResponse.id),
+    rawId: ensureBase64url(attestationResponse.rawId)
+  };
+  console.log('[WebAuthn] sanitizedResponse:', sanitizedResponse);
+  
   const db = global.db;
   const expectedChallenge = challengeMap.get(numero_identificacion);
   if (!expectedChallenge) {
@@ -107,7 +123,7 @@ router.post("/register/verify", async (req, res) => {
   let verification;
   try {
     verification = await verifyRegistrationResponse({
-      response: attestationResponse,
+      response: sanitizedResponse,
       expectedChallenge,
       expectedOrigin: origin,
       expectedRPID: rpID
