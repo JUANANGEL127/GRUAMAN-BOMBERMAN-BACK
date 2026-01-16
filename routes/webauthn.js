@@ -78,11 +78,12 @@ router.post("/register/options", async (req, res) => {
       attestationType: "none",
       authenticatorSelection: {
         residentKey: "preferred",
-        userVerification: "preferred",
-        authenticatorAttachment: "platform"
+        userVerification: "preferred"
+        // Removido authenticatorAttachment: "platform" para permitir
+        // llaves de seguridad externas y autenticación cross-device
       },
       excludeCredentials: credenciales.map(c => ({
-        id: base64url.toBuffer(c.credential_id),
+        id: c.credential_id, // Ya es base64url string en v13+
         type: "public-key"
       }))
     });
@@ -168,17 +169,24 @@ router.post("/authenticate/options", async (req, res) => {
   }
   const db = global.db;
   const credenciales = await getCredenciales(numero_identificacion, db);
+  console.log('[WebAuthn] /authenticate/options - credenciales encontradas:', credenciales.length);
   if (!credenciales.length) {
-    return res.status(404).json({ error: "No hay credenciales para este usuario" });
+    return res.status(404).json({ 
+      error: "No hay credenciales para este usuario",
+      mensaje: "Este dispositivo no tiene llaves de acceso registradas. Por favor, registre primero una llave de acceso.",
+      requiereRegistro: true
+    });
   }
   const authenticationOptions = await generateAuthenticationOptions({
     rpID,
     userVerification: "preferred",
     allowCredentials: credenciales.map(c => ({
       id: c.credential_id, // Ya es base64url string
-      type: "public-key"
+      type: "public-key",
+      transports: ["internal", "hybrid", "usb", "ble", "nfc"] // Permitir todos los transportes
     }))
   });
+  console.log('[WebAuthn] authenticationOptions generadas:', util.inspect(authenticationOptions, { depth: null, colors: true }));
   challengeMap.set(numero_identificacion, authenticationOptions.challenge);
   res.json(authenticationOptions);
 });
