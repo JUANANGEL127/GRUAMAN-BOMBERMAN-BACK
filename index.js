@@ -45,6 +45,23 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY
 );
 
+// Función helper para enviar notificaciones push con opciones correctas
+async function sendPushNotification(subscription, payload) {
+  const options = {
+    TTL: 86400, // 24 horas en segundos
+    headers: {
+      'Content-Type': 'application/json',
+      'Urgency': 'high'
+    }
+  };
+  
+  return webpush.sendNotification(
+    subscription,
+    JSON.stringify(payload),
+    options
+  );
+}
+
 const { Pool } = pkg;
 const app = express();
 
@@ -460,14 +477,12 @@ app.post("/push/test", async (req, res) => {
     }
     const subscription = workerRes.rows[0].subscription;
     try {
-      await webpush.sendNotification(
-        subscription,
-        JSON.stringify({
-          title,
-          body,
-          icon: "/icon-192.png"
-        })
-      );
+      await sendPushNotification(subscription, {
+        title,
+        body,
+        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+        url: "/"
+      });
       return res.json({ success: true, message: "Notificación enviada" });
     } catch (err) {
       console.error("Error enviando notificación de prueba:", err);
@@ -827,14 +842,12 @@ cron.schedule('30 6 * * *', async () => {
   `);
   for (const row of result.rows) {
     try {
-      await webpush.sendNotification(
-        row.subscription,
-        JSON.stringify({
-          title: "¡Buenos días!",
-          body: "buenos dias super heroe, no olvides llenar todos tus permisos el dia de hoy",
-          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png"
-        })
-      );
+      await sendPushNotification(row.subscription, {
+        title: "¡Buenos días!",
+        body: "buenos dias super heroe, no olvides llenar todos tus permisos el dia de hoy",
+        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+        url: "/"
+      });
     } catch (err) {
       console.error("Error enviando notificación 6:30am:", err);
     }
@@ -850,14 +863,12 @@ cron.schedule('0 10 * * *', async () => {
   `);
   for (const row of result.rows) {
     try {
-      await webpush.sendNotification(
-        row.subscription,
-        JSON.stringify({
-          title: "¡Ánimo super héroe!",
-          body: "hola super heroe, !tu puedes!, hoy es un gran dia para construir una catedral!",
-          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png"
-        })
-      );
+      await sendPushNotification(row.subscription, {
+        title: "¡Ánimo super héroe!",
+        body: "hola super heroe, !tu puedes!, hoy es un gran dia para construir una catedral!",
+        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+        url: "/"
+      });
     } catch (err) {
       console.error("Error enviando notificación 10:00am:", err);
     }
@@ -873,14 +884,12 @@ cron.schedule('0 14 * * *', async () => {
   `);
   for (const row of result.rows) {
     try {
-      await webpush.sendNotification(
-        row.subscription,
-        JSON.stringify({
-          title: "¿Cómo vas?",
-          body: "¿cómo vas super heroe?, ¿todo marchando",
-          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png"
-        })
-      );
+      await sendPushNotification(row.subscription, {
+        title: "¿Cómo vas?",
+        body: "¿cómo vas super heroe?, ¿todo marchando",
+        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+        url: "/"
+      });
     } catch (err) {
       console.error("Error enviando notificación 2:00pm:", err);
     }
@@ -896,16 +905,14 @@ cron.schedule('25 15 * * *', async () => {
   `);
   for (const row of result.rows) {
     try {
-      await webpush.sendNotification(
-        row.subscription,
-        JSON.stringify({
-          title: "¡Hola super heroe!",
-          body: "pasamos a recordarte que somo progreso!",
-          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png"
-        })
-      );
+      await sendPushNotification(row.subscription, {
+        title: "¡Hola super heroe!",
+        body: "pasamos a recordarte que somo progreso!",
+        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+        url: "/"
+      });
     } catch (err) {
-      console.error("Error enviando notificación 2:40pm:", err);
+      console.error("Error enviando notificación 3:25pm:", err);
     }
   }
 });
@@ -919,14 +926,12 @@ cron.schedule('0 17 * * *', async () => {
   `);
   for (const row of result.rows) {
     try {
-      await webpush.sendNotification(
-        row.subscription,
-        JSON.stringify({
-          title: "¿Terminaste?",
-          body: "super heroe, ya terminaste todos tus registros?",
-          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png"
-        })
-      );
+      await sendPushNotification(row.subscription, {
+        title: "¿Terminaste?",
+        body: "super heroe, ya terminaste todos tus registros?",
+        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+        url: "/"
+      });
     } catch (err) {
       console.error("Error enviando notificación 5:00pm:", err);
     }
@@ -980,14 +985,12 @@ cron.schedule('0 16 * * *', async () => {
 
     if (faltantes.length > 0) {
       try {
-        await webpush.sendNotification(
-          row.subscription,
-          JSON.stringify({
-            title: "¡Atención super héroe!",
-            body: `super heroe, te falta ${faltantes.join(", ")} por llenar, !llenalo, tu puedes!`,
-            icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png"
-          })
-        );
+        await sendPushNotification(row.subscription, {
+          title: "¡Atención super héroe!",
+          body: `super heroe, te falta ${faltantes.join(", ")} por llenar, !llenalo, tu puedes!`,
+          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+          url: "/"
+        });
       } catch (err) {
         console.error("Error enviando notificación 4:00pm:", err);
       }
