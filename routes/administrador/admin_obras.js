@@ -30,16 +30,29 @@ router.get("/listar", async (req, res) => {
 router.post("/agregar", async (req, res) => {
   try {
     const pool = global.db;
-    const { nombre_obra, empresa_id, latitud, longitud, constructora, activa } = req.body;
-    if (!nombre_obra || !empresa_id || !latitud || !longitud || !constructora) {
+    const { nombre_obra, empresa_id, direccion, ciudad, constructora, activa } = req.body;
+    console.log('[admin_obras/agregar] Datos recibidos:', req.body);
+    if (!nombre_obra || !empresa_id || !direccion || !ciudad || !constructora) {
+      console.error('[admin_obras/agregar] Faltan datos obligatorios:', { nombre_obra, empresa_id, direccion, ciudad, constructora });
       return res.status(400).json({ success: false, error: "Faltan datos obligatorios" });
     }
-    const q = await pool.query(
-      `INSERT INTO obras (nombre_obra, empresa_id, latitud, longitud, constructora, activa)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, nombre_obra, empresa_id, latitud, longitud, constructora, activa`,
-      [nombre_obra, empresa_id, latitud, longitud, constructora, activa !== false]
-    );
-    res.json({ success: true, obra: q.rows[0] });
+    // Geocodifica la dirección en Colombia
+    try {
+      const { geocodeColombia } = await import('../../scripts/geocode_colombia.js');
+      const direccionCompleta = `${direccion}, ${ciudad}, Colombia`;
+      console.log('[admin_obras/agregar] Geocodificando:', direccionCompleta);
+      const { latitud, longitud } = await geocodeColombia(direccionCompleta);
+      console.log('[admin_obras/agregar] Resultado geocodificación:', { latitud, longitud });
+      const q = await pool.query(
+        `INSERT INTO obras (nombre_obra, empresa_id, latitud, longitud, constructora, activa)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, nombre_obra, empresa_id, latitud, longitud, constructora, activa`,
+        [nombre_obra, empresa_id, latitud, longitud, constructora, activa !== false]
+      );
+      res.json({ success: true, obra: q.rows[0] });
+    } catch (geoErr) {
+      console.error('[admin_obras/agregar] Error geocodificación:', geoErr);
+      res.status(400).json({ success: false, error: `No se pudo obtener lat/lon: ${geoErr.message}` });
+    }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
