@@ -127,11 +127,9 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    // Cambia el nombre de la tabla de "lista_chequeo" a "checklist"
+    // ...existing code for camposValidos, normalización, etc...
     const columnas = await obtenerCamposValidosYRequeridos(db, "checklist");
     const camposValidos = columnas.map(col => col.nombre);
-
-    // Normaliza los valores de los campos tipo opción a 'BUENO', 'REGULAR', 'MALO'
     const optionFields = new Set(camposValidos.filter(
       k => k.endsWith("_observacion") === false &&
         k !== "id" && k !== "observaciones" &&
@@ -139,8 +137,6 @@ router.post("/", async (req, res) => {
         k !== "fecha_servicio" && k !== "nombre_operador" &&
         k !== "bomba_numero" && k !== "horometro_motor"
     ));
-
-    // Solo normaliza los campos tipo opción, no los *_observacion
     function normalizeOption(val) {
       if (val === undefined || val === null) return "REGULAR";
       if (typeof val === "string") {
@@ -153,28 +149,66 @@ router.post("/", async (req, res) => {
       }
       return "REGULAR";
     }
-
-    // Aplica normalización solo a los campos tipo opción
     camposValidos.forEach(campo => {
       if (optionFields.has(campo) && data[campo] !== undefined) {
         data[campo] = normalizeOption(data[campo]);
       }
-      // Los campos *_observacion NO se normalizan, se dejan tal cual vienen del front
     });
-
     const campos = Object.keys(data).filter(key => camposValidos.includes(key));
     const valores = campos.map(key => data[key]);
     const placeholders = campos.map((_, i) => `$${i + 1}`).join(", ");
-
     if (campos.length === 0) {
       return res.status(400).json({ error: "No se enviaron campos válidos para la tabla checklist" });
     }
-
     await db.query(
       `INSERT INTO checklist (${campos.join(", ")}) VALUES (${placeholders})`,
       valores
     );
-    res.json({ message: "Checklist guardado correctamente" });
+
+    // --- Generar PDF y enviar por correo ---
+    // Reutiliza la función de checklist_admin.js para generar el PDF llenando checklist_admin_template.xlsx
+    try {
+      const nodemailer = await import('nodemailer');
+      const adminModule = await import(process.cwd() + '/routes/administrador_bomberman/checklist_admin.js');
+      const generarPDFPorChecklist = adminModule.generarPDFPorChecklist || (adminModule.default && adminModule.default.generarPDFPorChecklist);
+      if (typeof generarPDFPorChecklist !== 'function') throw new Error('No se pudo importar la función generarPDFPorChecklist');
+      // Filtra solo campos REGULAR o MALO y sus observaciones
+      const camposValidos = Object.keys(data);
+      const respuestasRegMal = {};
+      camposValidos.forEach(campo => {
+        if (typeof data[campo] === 'string' && (data[campo].toUpperCase() === 'REGULAR' || data[campo].toUpperCase() === 'MALO')) {
+          respuestasRegMal[campo] = data[campo];
+          // Busca observación asociada si existe
+          const obsKey = campo + '_observacion';
+          if (data[obsKey]) {
+            respuestasRegMal[obsKey] = data[obsKey];
+          }
+        }
+      });
+      // Genera el PDF solo con estos campos
+      const pdfBuf = await generarPDFPorChecklist(respuestasRegMal);
+      // Configura nodemailer con variables de entorno
+      const transporter = nodemailer.default.createTransport({
+        host: process.env.SMTP_HOST,
+        port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 465,
+        secure: true,
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS
+        }
+      });
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM,
+        to: 'scliente@allinconcrete.com.co, administracion@allinconcrete.com.co, comercial.operativa@allinconcrete.com.co, dir.operativabta@allinconcrete.com.co',
+        subject: 'Nuevo checklist registrado',
+        text: 'Se ha registrado un nuevo checklist. Adjuntamos el PDF generado automáticamente.',
+        attachments: [{ filename: 'checklist.pdf', content: pdfBuf }]
+      });
+    } catch (mailErr) {
+      console.error('Error generando PDF o enviando correo:', mailErr);
+    }
+
+    res.json({ message: "Checklist guardado correctamente y PDF enviado por correo" });
   } catch (error) {
     console.error("Error al guardar checklist:", error);
     res.status(500).json({ error: "Error al guardar checklist", detalle: error.message });

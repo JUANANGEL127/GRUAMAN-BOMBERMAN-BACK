@@ -378,4 +378,5 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
   }
 });
 
+export { generarPDFPorChecklist };
 export default router;
