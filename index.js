@@ -636,7 +636,7 @@ app.post("/validar_ubicacion", async (req, res) => {
     }
     const { latitud, longitud } = result.rows[0];
     const distancia = getDistanceFromLatLonInMeters(lat, lon, latitud, longitud);
-    if (distancia <= 250) {
+    if (distancia <= 500) {
       res.json({ ok: true });
     } else {
       res.status(403).json({ ok: false, message: "No estás en la ubicación de la obra seleccionada" });
