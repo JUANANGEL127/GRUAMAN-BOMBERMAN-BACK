@@ -183,21 +183,31 @@ router.post("/", async (req, res) => {
       const generarPDFPorChecklist = adminModule.generarPDFPorChecklist || (adminModule.default && adminModule.default.generarPDFPorChecklist);
       if (typeof generarPDFPorChecklist !== 'function') throw new Error('No se pudo importar la función generarPDFPorChecklist');
       
-      // Filtra solo campos REGULAR o MALO y sus observaciones
+      // Incluir campos básicos del formulario
+      const datosPDF = {
+        nombre_cliente: data.nombre_cliente || '',
+        nombre_proyecto: data.nombre_proyecto || '',
+        fecha_servicio: data.fecha_servicio || '',
+        nombre_operador: data.nombre_operador || '',
+        bomba_numero: data.bomba_numero || '',
+        horometro_motor: data.horometro_motor || ''
+      };
+      
+      // Agregar campos REGULAR o MALO y sus observaciones
       const camposValidosPDF = Object.keys(data);
-      const respuestasRegMal = {};
       camposValidosPDF.forEach(campo => {
         if (typeof data[campo] === 'string' && (data[campo].toUpperCase() === 'REGULAR' || data[campo].toUpperCase() === 'MALO')) {
-          respuestasRegMal[campo] = data[campo];
+          datosPDF[campo] = data[campo];
           // Busca observación asociada si existe
           const obsKey = campo + '_observacion';
           if (data[obsKey]) {
-            respuestasRegMal[obsKey] = data[obsKey];
+            datosPDF[obsKey] = data[obsKey];
           }
         }
       });
-      // Genera el PDF solo con estos campos
-      pdfBuf = await generarPDFPorChecklist(respuestasRegMal);
+      
+      // Genera el PDF con todos los datos necesarios
+      pdfBuf = await generarPDFPorChecklist(datosPDF);
       
       // Enviar correo con PDF adjunto
       const nodemailer = await import('nodemailer');
