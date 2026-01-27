@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { enviarDocumentoAFirmar, POSICIONES_FIRMA } from '../signio.js';
+import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = Router();
 
 // Middleware para verificar si la base de datos está disponible
@@ -160,22 +162,31 @@ router.post("/", async (req, res) => {
     if (campos.length === 0) {
       return res.status(400).json({ error: "No se enviaron campos válidos para la tabla checklist" });
     }
-    await db.query(
-      `INSERT INTO checklist (${campos.join(", ")}) VALUES (${placeholders})`,
+    const insertResult = await db.query(
+      `INSERT INTO checklist (${campos.join(", ")}) VALUES (${placeholders}) RETURNING id`,
       valores
     );
+    const checklistId = insertResult.rows[0]?.id;
+
+    // --- Datos de firmantes (opcional, enviados desde el frontend) ---
+    const { 
+      requiere_firma = false,
+      firmante_principal,  // { nombre, cedula, email, celular }
+      firmantes_externos   // [{ nombre, cedula, email, celular }, ...]
+    } = req.body;
 
     // --- Generar PDF y enviar por correo ---
     // Reutiliza la función de checklist_admin.js para generar el PDF llenando checklist_admin_template.xlsx
+    let pdfBuf = null;
     try {
-      const nodemailer = await import('nodemailer');
       const adminModule = await import(process.cwd() + '/routes/administrador_bomberman/checklist_admin.js');
       const generarPDFPorChecklist = adminModule.generarPDFPorChecklist || (adminModule.default && adminModule.default.generarPDFPorChecklist);
       if (typeof generarPDFPorChecklist !== 'function') throw new Error('No se pudo importar la función generarPDFPorChecklist');
+      
       // Filtra solo campos REGULAR o MALO y sus observaciones
-      const camposValidos = Object.keys(data);
+      const camposValidosPDF = Object.keys(data);
       const respuestasRegMal = {};
-      camposValidos.forEach(campo => {
+      camposValidosPDF.forEach(campo => {
         if (typeof data[campo] === 'string' && (data[campo].toUpperCase() === 'REGULAR' || data[campo].toUpperCase() === 'MALO')) {
           respuestasRegMal[campo] = data[campo];
           // Busca observación asociada si existe
@@ -186,8 +197,10 @@ router.post("/", async (req, res) => {
         }
       });
       // Genera el PDF solo con estos campos
-      const pdfBuf = await generarPDFPorChecklist(respuestasRegMal);
-      // Configura nodemailer con variables de entorno
+      pdfBuf = await generarPDFPorChecklist(respuestasRegMal);
+      
+      // Enviar correo con PDF adjunto
+      const nodemailer = await import('nodemailer');
       const transporter = nodemailer.default.createTransport({
         host: process.env.SMTP_HOST,
         port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 465,
@@ -199,7 +212,7 @@ router.post("/", async (req, res) => {
       });
       await transporter.sendMail({
         from: process.env.SMTP_FROM,
-        to: 'scliente@allinconcrete.com.co, administracion@allinconcrete.com.co, comercial.operativa@allinconcrete.com.co, dir.operativabta@allinconcrete.com.co',
+        to: 'davidl.lamprea810@gmail.com',
         subject: 'Nuevo checklist registrado',
         text: 'Se ha registrado un nuevo checklist. Adjuntamos el PDF generado automáticamente.',
         attachments: [{ filename: 'checklist.pdf', content: pdfBuf }]
@@ -208,7 +221,74 @@ router.post("/", async (req, res) => {
       console.error('Error generando PDF o enviando correo:', mailErr);
     }
 
-    res.json({ message: "Checklist guardado correctamente y PDF enviado por correo" });
+    // --- Enviar a firma electrónica si se requiere ---
+    let resultadoFirma = null;
+    if (requiere_firma && pdfBuf && firmante_principal) {
+      try {
+        // Enviar a Signio
+        resultadoFirma = await enviarDocumentoAFirmar({
+          nombre_documento: `Checklist de Bomba - ${data.nombre_cliente || 'Cliente'}`,
+          external_id: `checklist_${checklistId}`,
+          pdf: pdfBuf,
+          nombre_archivo: `Checklist_${checklistId || 'sin_id'}_${new Date().toISOString().split('T')[0]}.pdf`,
+          firmante_principal: {
+            nombre: firmante_principal.nombre,
+            tipo_identificacion: 'CC',
+            identificacion: firmante_principal.cedula,
+            email: firmante_principal.email,
+            celular: firmante_principal.celular || null
+          },
+          firmantes_externos: Array.isArray(firmantes_externos) ? firmantes_externos.map(f => ({
+            nombre: f.nombre,
+            tipo_identificacion: 'CC',
+            identificacion: f.cedula,
+            email: f.email,
+            celular: f.celular || null
+          })) : []
+        });
+
+        // Guardar ID de transacción en la base de datos (si existe la columna)
+        if (resultadoFirma.success && resultadoFirma.transaccion_id && checklistId) {
+          try {
+            await db.query(
+              `UPDATE checklist SET signio_transaccion_id = $1 WHERE id = $2`,
+              [resultadoFirma.transaccion_id, checklistId]
+            );
+          } catch (updateErr) {
+            // La columna puede no existir, no es crítico
+            console.log('Nota: No se pudo guardar signio_transaccion_id (columna puede no existir)');
+          }
+        }
+
+      } catch (firmaErr) {
+        console.error('Error enviando a firma electrónica:', firmaErr);
+        resultadoFirma = { success: false, error: firmaErr.message };
+      }
+    }
+
+    // Respuesta final
+    const respuesta = { 
+      message: "Checklist guardado correctamente y PDF enviado por correo",
+      id: checklistId
+    };
+
+    if (requiere_firma) {
+      if (resultadoFirma?.success) {
+        respuesta.firma = {
+          success: true,
+          url_firma: resultadoFirma.url_firma,
+          transaccion_id: resultadoFirma.transaccion_id,
+          mensaje: "Documento enviado a firma electrónica"
+        };
+      } else {
+        respuesta.firma = {
+          success: false,
+          error: resultadoFirma?.error || "No se pudo procesar la firma"
+        };
+      }
+    }
+
+    res.json(respuesta);
   } catch (error) {
     console.error("Error al guardar checklist:", error);
     res.status(500).json({ error: "Error al guardar checklist", detalle: error.message });

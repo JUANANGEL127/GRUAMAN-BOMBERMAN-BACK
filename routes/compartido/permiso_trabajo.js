@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { enviarDocumentoAFirmar } from '../signio.js';
+import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = Router();
 
 // Verifica disponibilidad de la DB

@@ -2,6 +2,8 @@ import { Router } from "express";
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
 import nodemailer from "nodemailer";
+import { enviarDocumentoAFirmar } from '../signio.js';
+import { generarPDF as generarPDFHelper, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 
 const router = Router();
 

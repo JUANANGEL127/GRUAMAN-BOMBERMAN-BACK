@@ -1,5 +1,7 @@
 import express from "express";
 import { DateTime } from "luxon";
+import { enviarDocumentoAFirmar } from '../signio.js';
+import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = express.Router();
 
 // Usa global.db para compatibilidad con index.js

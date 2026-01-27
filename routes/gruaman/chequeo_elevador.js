@@ -1,4 +1,6 @@
 import express from 'express';
+import { enviarDocumentoAFirmar } from '../signio.js';
+import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = express.Router();
 
 // Inserta un registro de chequeo_elevador

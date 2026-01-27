@@ -29,6 +29,7 @@ import adminUsuariosRouter from "./routes/administrador/admin_usuarios.js";
 import adminObrasRouter from "./routes/administrador/admin_obras.js";
 import adminHorasExtraRouter from './routes/administrador/admin_horas_extra.js';
 import webauthnRouter from './routes/webauthn.js';
+import signioRouter from './routes/signio.js';
 
 // Cargar variables de entorno según el entorno
 import dotenv from "dotenv";
@@ -70,6 +71,7 @@ app.use(express.json());
 app.use("/bomberman/planillabombeo", planillaBombeoRouter);
 app.use("/bomberman/checklist", checklistRouter);
 app.use('/webauthn', webauthnRouter);
+app.use('/signio', signioRouter);
 
 // Configuración de la conexión a PostgreSQL
 const pool = process.env.DATABASE_URL
