@@ -222,7 +222,7 @@ router.post("/", async (req, res) => {
       });
       await transporter.sendMail({
         from: process.env.SMTP_FROM,
-        to: 'davidl.lamprea810@gmail.com',
+        to: 'scliente@allinconcrete.com.co, administracion@allinconcrete.com.co, comercial.operativa@allinconcrete.com.co, dir.operativabta@allinconcrete.com.co',
         subject: 'Nuevo checklist registrado',
         text: 'Se ha registrado un nuevo checklist. Adjuntamos el PDF generado automáticamente.',
         attachments: [{ filename: 'checklist.pdf', content: pdfBuf }]
