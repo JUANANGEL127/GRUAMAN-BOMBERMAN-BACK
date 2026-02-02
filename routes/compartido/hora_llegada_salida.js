@@ -85,16 +85,12 @@ router.post("/ingreso", async (req, res) => {
 });
 
 // POST /horas_jornada/salida
-// Body esperado: { nombre_operador, fecha_servicio, hora_salida, minutos_almuerzo }
+// Body esperado: { nombre_operador, fecha_servicio, hora_salida }
 router.post("/salida", async (req, res) => {
-  const { nombre_operador, fecha_servicio, hora_salida, minutos_almuerzo } = req.body || {};
+  const { nombre_operador, fecha_servicio, hora_salida } = req.body || {};
 
-  if (!nombre_operador || !fecha_servicio || !hora_salida || minutos_almuerzo === undefined) {
-    return res.status(400).json({ error: "Faltan parámetros obligatorios: nombre_operador, fecha_servicio, hora_salida, minutos_almuerzo" });
-  }
-
-  if (typeof minutos_almuerzo === "number" && (minutos_almuerzo < 0 || minutos_almuerzo > 240)) {
-    return res.status(400).json({ error: "minutos_almuerzo debe ser un número entre 0 y 240" });
+  if (!nombre_operador || !fecha_servicio || !hora_salida) {
+    return res.status(400).json({ error: "Faltan parámetros obligatorios: nombre_operador, fecha_servicio, hora_salida" });
   }
 
   try {
@@ -102,7 +98,6 @@ router.post("/salida", async (req, res) => {
     if (!fechaDia) return res.status(400).json({ error: "fecha_servicio inválida" });
 
     // Buscar por fecha (solo día) para encontrar el registro correspondiente
-    // la tabla puede no tener columna 'id', solo necesitamos hora_ingreso aquí
     const existe = await db.query(
       "SELECT hora_ingreso FROM horas_jornada WHERE nombre_operador = $1 AND CAST(fecha_servicio AS date) = $2::date",
       [nombre_operador, fechaDia]
@@ -113,9 +108,9 @@ router.post("/salida", async (req, res) => {
 
     await db.query(
       `UPDATE horas_jornada
-       SET hora_salida = $1, minutos_almuerzo = $2
-       WHERE nombre_operador = $3 AND CAST(fecha_servicio AS date) = $4::date`,
-      [hora_salida, minutos_almuerzo, nombre_operador, fechaDia]
+       SET hora_salida = $1
+       WHERE nombre_operador = $2 AND CAST(fecha_servicio AS date) = $3::date`,
+      [hora_salida, nombre_operador, fechaDia]
     );
 
     return res.json({ success: true });
