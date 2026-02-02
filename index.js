@@ -632,6 +632,13 @@ app.post("/validar_ubicacion", async (req, res) => {
     return res.status(400).json({ ok: false, message: "Parámetros inválidos" });
   }
   try {
+    // Verificar si es la obra señuelo (bypass de geolocalización)
+    const OBRA_BYPASS = process.env.OBRA_BYPASS_NOMBRE || "LA CENTRAL";
+    const obraCheck = await pool.query(`SELECT nombre_obra FROM obras WHERE id = $1`, [obra_id]);
+    if (obraCheck.rows.length > 0 && obraCheck.rows[0].nombre_obra === OBRA_BYPASS) {
+      return res.json({ ok: true }); // Acceso sin validar ubicación
+    }
+
     const result = await pool.query(`SELECT latitud, longitud FROM obras WHERE id = $1`, [obra_id]);
     if (result.rows.length === 0 || result.rows[0].latitud == null || result.rows[0].longitud == null) {
       return res.status(404).json({ ok: false, message: "Obra no encontrada o sin coordenadas" });
