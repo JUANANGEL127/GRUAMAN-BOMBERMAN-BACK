@@ -1,5 +1,6 @@
 import express from "express";
 import { DateTime } from "luxon";
+import cron from "node-cron";
 import { enviarDocumentoAFirmar } from '../signio.js';
 import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = express.Router();
@@ -13,6 +14,61 @@ try {
   console.error("Error: global.db no está definido. Asegúrate de importar este router después de inicializar la base de datos en index.js.");
   throw e;
 }
+
+const CRON_TIMEZONE = 'America/Bogota';
+
+// 12:00am (medianoche) - Completar horas de salida faltantes del día anterior
+cron.schedule('0 0 * * *', async () => {
+  try {
+    // Obtener la fecha de ayer en zona Colombia
+    const ayer = DateTime.now().setZone(CRON_TIMEZONE).minus({ days: 1 }).toISODate();
+
+    // Buscar registros del día anterior sin hora de salida
+    const registrosSinSalida = await db.query(
+      `SELECT nombre_operador, hora_ingreso, fecha_servicio 
+       FROM horas_jornada 
+       WHERE CAST(fecha_servicio AS date) = $1::date 
+       AND (hora_salida IS NULL OR hora_salida::text = '')`,
+      [ayer]
+    );
+
+    console.log(`[CRON 00:00] Encontrados ${registrosSinSalida.rows.length} registros sin hora de salida para ${ayer}`);
+
+    for (const row of registrosSinSalida.rows) {
+      try {
+        // Calcular hora de salida = hora_ingreso + 7h20min (7.33 horas)
+        const horaIngreso = String(row.hora_ingreso).slice(0, 5); // "HH:MM"
+        const [hh, mm] = horaIngreso.split(':').map(Number);
+        
+        let salidaHoras = hh + 7;
+        let salidaMinutos = mm + 20;
+        
+        if (salidaMinutos >= 60) {
+          salidaHoras += 1;
+          salidaMinutos -= 60;
+        }
+        if (salidaHoras >= 24) {
+          salidaHoras -= 24;
+        }
+        
+        const horaSalidaCalculada = `${String(salidaHoras).padStart(2, '0')}:${String(salidaMinutos).padStart(2, '0')}`;
+
+        await db.query(
+          `UPDATE horas_jornada 
+           SET hora_salida = $1 
+           WHERE nombre_operador = $2 AND CAST(fecha_servicio AS date) = $3::date`,
+          [horaSalidaCalculada, row.nombre_operador, ayer]
+        );
+
+        console.log(`[CRON 00:00] Completada salida para ${row.nombre_operador}: ${horaIngreso} -> ${horaSalidaCalculada}`);
+      } catch (updateErr) {
+        console.error(`[CRON 00:00] Error actualizando salida para ${row.nombre_operador}:`, updateErr.message);
+      }
+    }
+  } catch (err) {
+    console.error("[CRON 00:00] Error en cron de completar salidas:", err.message);
+  }
+}, { timezone: CRON_TIMEZONE });
 
 // Normaliza la fecha de entrada a YYYY-MM-DD en zona America/Bogota
 function normalizeFechaToBogota(fechaInput) {

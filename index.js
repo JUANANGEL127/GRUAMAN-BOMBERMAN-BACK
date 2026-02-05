@@ -449,6 +449,17 @@ global.db = pool;
     );
   `);
 
+  // Tabla para locks de cron jobs (evita duplicados en múltiples instancias)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cron_locks (
+      lock_id VARCHAR(100) PRIMARY KEY,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Limpiar locks viejos (más de 1 día) al iniciar
+  await pool.query(`DELETE FROM cron_locks WHERE created_at < NOW() - INTERVAL '1 day'`).catch(() => {});
+
   // --- NUEVA TABLA PARA HORAS DE JORNADA ---
   await pool.query(`
   CREATE TABLE IF NOT EXISTS horas_jornada (
@@ -841,171 +852,210 @@ app.get("/push/subscribe/schema", (req, res) => {
 });
 
 // --- NOTIFICACIONES PUSH PROGRAMADAS ---
+// IMPORTANTE: Usamos timezone Colombia y un lock en BD para evitar duplicados en múltiples instancias
+
+const CRON_TIMEZONE = 'America/Bogota';
+
+// Helper para ejecutar cron con lock en BD (evita duplicados si hay múltiples instancias)
+async function ejecutarConLock(nombreTarea, callback) {
+  const lockId = `cron_${nombreTarea}_${new Date().toISOString().slice(0,13)}`; // Lock por hora
+  try {
+    // Intentar obtener el lock (insertar registro único)
+    await pool.query(
+      `INSERT INTO cron_locks (lock_id, created_at) VALUES ($1, NOW()) ON CONFLICT (lock_id) DO NOTHING`,
+      [lockId]
+    );
+    // Verificar si obtuvimos el lock (solo la primera instancia lo logra)
+    const check = await pool.query(`SELECT 1 FROM cron_locks WHERE lock_id = $1 AND created_at > NOW() - INTERVAL '5 minutes'`, [lockId]);
+    if (check.rows.length > 0) {
+      await callback();
+    }
+  } catch (err) {
+    // Si la tabla no existe, ejecutar sin lock (retrocompatibilidad)
+    if (err.code === '42P01') {
+      await callback();
+    } else {
+      console.error(`Error en lock para ${nombreTarea}:`, err.message);
+    }
+  }
+}
 
 // 6:30am - Saludo de buenos días
 cron.schedule('30 6 * * *', async () => {
-  const result = await pool.query(`
-    SELECT t.id, t.nombre, ps.subscription
-    FROM trabajadores t
-    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
-  `);
-  for (const row of result.rows) {
-    try {
-      await sendPushNotification(row.subscription, {
-        title: "¡Buenos días!",
-        body: "buenos dias super heroe, no olvides llenar todos tus permisos el dia de hoy",
-        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
-        url: "/"
-      });
-    } catch (err) {
-      console.error("Error enviando notificación 6:30am:", err);
-    }
-  }
-});
-
-// 10:00am - Mensaje motivacional
-cron.schedule('0 10 * * *', async () => {
-  const result = await pool.query(`
-    SELECT t.id, t.nombre, ps.subscription
-    FROM trabajadores t
-    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
-  `);
-  for (const row of result.rows) {
-    try {
-      await sendPushNotification(row.subscription, {
-        title: "¡Ánimo super héroe!",
-        body: "hola super heroe, !tu puedes!, hoy es un gran dia para construir una catedral!",
-        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
-        url: "/"
-      });
-    } catch (err) {
-      console.error("Error enviando notificación 10:00am:", err);
-    }
-  }
-});
-
-// 2:00pm - Mensaje de seguimiento
-cron.schedule('0 14 * * *', async () => {
-  const result = await pool.query(`
-    SELECT t.id, t.nombre, ps.subscription
-    FROM trabajadores t
-    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
-  `);
-  for (const row of result.rows) {
-    try {
-      await sendPushNotification(row.subscription, {
-        title: "¿Cómo vas?",
-        body: "¿cómo vas super heroe?, ¿todo marchando",
-        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
-        url: "/"
-      });
-    } catch (err) {
-      console.error("Error enviando notificación 2:00pm:", err);
-    }
-  }
-});
-
-// 3:25pm (hora Colombia) - Notificación de recordatorio Progreso
-cron.schedule('25 15 * * *', async () => {
-  const result = await pool.query(`
-    SELECT t.id, t.nombre, ps.subscription
-    FROM trabajadores t
-    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
-  `);
-  for (const row of result.rows) {
-    try {
-      await sendPushNotification(row.subscription, {
-        title: "¡Hola super heroe!",
-        body: "pasamos a recordarte que somo progreso!",
-        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
-        url: "/"
-      });
-    } catch (err) {
-      console.error("Error enviando notificación 3:25pm:", err);
-    }
-  }
-});
-
-// 5:00pm - Mensaje de cierre
-cron.schedule('0 17 * * *', async () => {
-  const result = await pool.query(`
-    SELECT t.id, t.nombre, ps.subscription
-    FROM trabajadores t
-    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
-  `);
-  for (const row of result.rows) {
-    try {
-      await sendPushNotification(row.subscription, {
-        title: "¿Terminaste?",
-        body: "super heroe, ya terminaste todos tus registros?",
-        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
-        url: "/"
-      });
-    } catch (err) {
-      console.error("Error enviando notificación 5:00pm:", err);
-    }
-  }
-});
-
-// 4:00pm - Notificación de formularios faltantes
-cron.schedule('0 16 * * *', async () => {
-  const hoy = new Date().toISOString().slice(0, 10);
-
-  // Define los formularios a revisar (agrega aquí los que quieras chequear)
-  const formularios = [
-    { nombre: "registro de horas", tabla: "registros_horas" },
-    { nombre: "planilla de bombeo", tabla: "planilla_bombeo" },
-    { nombre: "permiso de trabajo", tabla: "permiso_trabajo" },
-    { nombre: "chequeo de alturas", tabla: "chequeo_alturas" },
-    { nombre: "chequeo de torregruas", tabla: "chequeo_torregruas" },
-    { nombre: "inspección EPCC", tabla: "inspeccion_epcc" },
-    { nombre: "inspección izaje", tabla: "inspeccion_izaje" },
-    // Agrega más si lo necesitas
-  ];
-
-  // Obtén todos los trabajadores suscritos
-  const trabajadores = await pool.query(`
-    SELECT t.id, t.nombre, ps.subscription
-    FROM trabajadores t
-    JOIN push_subscriptions ps ON ps.trabajador_id = t.id
-  `);
-
-  for (const row of trabajadores.rows) {
-    let faltantes = [];
-    for (const form of formularios) {
-      // Verifica si el trabajador tiene registro para hoy en cada formulario
-      let existe = false;
-      try {
-        const res = await pool.query(
-          `SELECT 1 FROM ${form.tabla} WHERE 
-            (${form.tabla}.trabajador_id = $1 OR 
-             ${form.tabla}.nombre_operador = $2 OR 
-             ${form.tabla}.nombre = $2) 
-            AND fecha_servicio = $3
-            LIMIT 1`,
-          [row.id, row.nombre, hoy]
-        );
-        existe = res.rows.length > 0;
-      } catch (e) {
-        // Si la tabla no tiene esos campos, ignora el error
-      }
-      if (!existe) faltantes.push(form.nombre);
-    }
-
-    if (faltantes.length > 0) {
+  await ejecutarConLock('buenos_dias_630', async () => {
+    const result = await pool.query(`
+      SELECT t.id, t.nombre, ps.subscription
+      FROM trabajadores t
+      JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+    `);
+    for (const row of result.rows) {
       try {
         await sendPushNotification(row.subscription, {
-          title: "¡Atención super héroe!",
-          body: `super heroe, te falta ${faltantes.join(", ")} por llenar, !llenalo, tu puedes!`,
+          title: "¡Buenos días!",
+          body: "buenos dias super heroe, no olvides llenar todos tus permisos el dia de hoy",
           icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
           url: "/"
         });
       } catch (err) {
-        console.error("Error enviando notificación 4:00pm:", err);
+        console.error("Error enviando notificación 6:30am:", err);
       }
     }
-  }
-});
+  });
+}, { timezone: CRON_TIMEZONE });
+
+// 10:00am - Mensaje motivacional
+cron.schedule('0 10 * * *', async () => {
+  await ejecutarConLock('motivacion_1000', async () => {
+    const result = await pool.query(`
+      SELECT t.id, t.nombre, ps.subscription
+      FROM trabajadores t
+      JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+    `);
+    for (const row of result.rows) {
+      try {
+        await sendPushNotification(row.subscription, {
+          title: "¡Ánimo super héroe!",
+          body: "hola super heroe, !tu puedes!, hoy es un gran dia para construir una catedral!",
+          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+          url: "/"
+        });
+      } catch (err) {
+        console.error("Error enviando notificación 10:00am:", err);
+      }
+    }
+  });
+}, { timezone: CRON_TIMEZONE });
+
+// 2:00pm - Mensaje de seguimiento
+cron.schedule('0 14 * * *', async () => {
+  await ejecutarConLock('seguimiento_1400', async () => {
+    const result = await pool.query(`
+      SELECT t.id, t.nombre, ps.subscription
+      FROM trabajadores t
+      JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+    `);
+    for (const row of result.rows) {
+      try {
+        await sendPushNotification(row.subscription, {
+          title: "¿Cómo vas?",
+          body: "¿cómo vas super heroe?, ¿todo marchando",
+          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+          url: "/"
+        });
+      } catch (err) {
+        console.error("Error enviando notificación 2:00pm:", err);
+      }
+    }
+  });
+}, { timezone: CRON_TIMEZONE });
+
+// 3:25pm (hora Colombia) - Notificación de recordatorio Progreso
+cron.schedule('25 15 * * *', async () => {
+  await ejecutarConLock('progreso_1525', async () => {
+    const result = await pool.query(`
+      SELECT t.id, t.nombre, ps.subscription
+      FROM trabajadores t
+      JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+    `);
+    for (const row of result.rows) {
+      try {
+        await sendPushNotification(row.subscription, {
+          title: "¡Hola super heroe!",
+          body: "pasamos a recordarte que somo progreso!",
+          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+          url: "/"
+        });
+      } catch (err) {
+        console.error("Error enviando notificación 3:25pm:", err);
+      }
+    }
+  });
+}, { timezone: CRON_TIMEZONE });
+
+// 5:00pm - Mensaje de cierre
+cron.schedule('0 17 * * *', async () => {
+  await ejecutarConLock('cierre_1700', async () => {
+    const result = await pool.query(`
+      SELECT t.id, t.nombre, ps.subscription
+      FROM trabajadores t
+      JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+    `);
+    for (const row of result.rows) {
+      try {
+        await sendPushNotification(row.subscription, {
+          title: "¿Terminaste?",
+          body: "super heroe, ya terminaste todos tus registros?",
+          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+          url: "/"
+        });
+      } catch (err) {
+        console.error("Error enviando notificación 5:00pm:", err);
+      }
+    }
+  });
+}, { timezone: CRON_TIMEZONE });
+
+// 4:00pm - Notificación de formularios faltantes
+cron.schedule('0 16 * * *', async () => {
+  await ejecutarConLock('faltantes_1600', async () => {
+    const hoy = new Date().toISOString().slice(0, 10);
+
+    // Define los formularios a revisar (agrega aquí los que quieras chequear)
+    const formularios = [
+      { nombre: "registro de horas", tabla: "registros_horas" },
+      { nombre: "planilla de bombeo", tabla: "planilla_bombeo" },
+      { nombre: "permiso de trabajo", tabla: "permiso_trabajo" },
+      { nombre: "chequeo de alturas", tabla: "chequeo_alturas" },
+      { nombre: "chequeo de torregruas", tabla: "chequeo_torregruas" },
+      { nombre: "inspección EPCC", tabla: "inspeccion_epcc" },
+      { nombre: "inspección izaje", tabla: "inspeccion_izaje" },
+      // Agrega más si lo necesitas
+    ];
+
+    // Obtén todos los trabajadores suscritos
+    const trabajadores = await pool.query(`
+      SELECT t.id, t.nombre, ps.subscription
+      FROM trabajadores t
+      JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+    `);
+
+    for (const row of trabajadores.rows) {
+      let faltantes = [];
+      for (const form of formularios) {
+        // Verifica si el trabajador tiene registro para hoy en cada formulario
+        let existe = false;
+        try {
+          const res = await pool.query(
+            `SELECT 1 FROM ${form.tabla} WHERE 
+              (${form.tabla}.trabajador_id = $1 OR 
+               ${form.tabla}.nombre_operador = $2 OR 
+               ${form.tabla}.nombre = $2) 
+              AND fecha_servicio = $3
+              LIMIT 1`,
+            [row.id, row.nombre, hoy]
+          );
+          existe = res.rows.length > 0;
+        } catch (e) {
+          // Si la tabla no tiene esos campos, ignora el error
+        }
+        if (!existe) faltantes.push(form.nombre);
+      }
+
+      if (faltantes.length > 0) {
+        try {
+          await sendPushNotification(row.subscription, {
+            title: "¡Atención super héroe!",
+            body: `super heroe, te falta ${faltantes.join(", ")} por llenar, !llenalo, tu puedes!`,
+            icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+            url: "/"
+          });
+        } catch (err) {
+          console.error("Error enviando notificación 4:00pm:", err);
+        }
+      }
+    }
+  });
+}, { timezone: CRON_TIMEZONE });
 
 
 // Endpoint para obtener la clave pública VAPID

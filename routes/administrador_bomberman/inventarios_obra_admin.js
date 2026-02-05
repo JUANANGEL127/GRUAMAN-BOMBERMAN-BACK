@@ -167,35 +167,73 @@ router.post('/descargar', async (req, res) => {
         return res.end();
       }
 
-      // Usar todas las claves de la primera fila para construir todas las columnas dinámicamente
+      // Formato vertical (ficha): cada registro como bloque Campo | Valor
       const keys = Object.keys(q.rows[0]);
-      ws.columns = keys.map(k => ({
-        header: k.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
-        key: k,
-        width: 20
-      }));
+      
+      // Configurar columnas
+      ws.columns = [
+        { header: 'Campo', key: 'campo', width: 30 },
+        { header: 'Valor', key: 'valor', width: 50 }
+      ];
 
-      // Añadir filas completas; formatear fecha_servicio y convertir valores no primitivos
-      q.rows.forEach(r => {
-        const rowObj = {};
+      // Estilo para encabezado de cada registro
+      const headerStyle = {
+        font: { bold: true, color: { argb: 'FFFFFFFF' } },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } },
+        alignment: { horizontal: 'center' }
+      };
+
+      // Estilo para campos
+      const campoStyle = {
+        font: { bold: true },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } }
+      };
+
+      let currentRow = 2; // Empezar después del header
+
+      q.rows.forEach((r, index) => {
+        // Título del registro
+        ws.mergeCells(`A${currentRow}:B${currentRow}`);
+        const titleCell = ws.getCell(`A${currentRow}`);
+        titleCell.value = `REGISTRO ${index + 1} - ID: ${r.id}`;
+        titleCell.style = headerStyle;
+        currentRow++;
+
+        // Cada campo como fila
         keys.forEach(k => {
           let val = r[k];
+          
+          // Formatear valor
           if (k === 'fecha_servicio') {
-            val = val ? (new Date(val)).toISOString().slice(0,10) : '';
+            try {
+              if (val) {
+                const d = new Date(val);
+                val = !Number.isNaN(d.getTime()) ? d.toISOString().slice(0,10) : String(val);
+              } else {
+                val = '';
+              }
+            } catch (e) { val = val ? String(val) : ''; }
           } else if (val === null || val === undefined) {
             val = '';
+          } else if (val instanceof Date) {
+            try {
+              val = !Number.isNaN(val.getTime()) ? val.toISOString().slice(0,10) : '';
+            } catch (e) { val = ''; }
+          } else if (Buffer.isBuffer(val)) {
+            val = '[Buffer]';
           } else if (typeof val === 'object') {
             try { val = JSON.stringify(val); } catch (e) { val = String(val); }
           }
-          rowObj[k] = val;
-        });
-        ws.addRow(rowObj);
-      });
 
-      // Ajuste ligero de anchuras (opcional)
-      ws.columns.forEach(col => {
-        if (!col.width || col.width < 12) col.width = 12;
-        if (col.width > 60) col.width = 60;
+          const row = ws.getRow(currentRow);
+          row.getCell(1).value = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          row.getCell(1).style = campoStyle;
+          row.getCell(2).value = val;
+          currentRow++;
+        });
+
+        // Línea vacía entre registros
+        currentRow++;
       });
 
       res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -254,9 +292,22 @@ router.post('/descargar', async (req, res) => {
       const rowArr = header.map(k => {
         let val = r[k];
         if (k === 'fecha_servicio') {
-          val = val ? (new Date(val)).toISOString().slice(0,10) : '';
+          try {
+            if (val) {
+              const d = new Date(val);
+              val = !Number.isNaN(d.getTime()) ? d.toISOString().slice(0,10) : String(val);
+            } else {
+              val = '';
+            }
+          } catch (e) { val = val ? String(val) : ''; }
         } else if (val === null || val === undefined) {
           val = '';
+        } else if (val instanceof Date) {
+          try {
+            val = !Number.isNaN(val.getTime()) ? val.toISOString().slice(0,10) : '';
+          } catch (e) { val = ''; }
+        } else if (Buffer.isBuffer(val)) {
+          val = '[Buffer]';
         } else if (typeof val === 'object') {
           try { val = JSON.stringify(val); } catch (e) { val = String(val); }
         }
