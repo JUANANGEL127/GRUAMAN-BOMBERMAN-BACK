@@ -14,74 +14,151 @@ router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
 
-  // Campos obligatorios (renombrados según petición)
+  // Campos obligatorios según nueva estructura de BD
   const required = [
+    // Datos generales
     "nombre_cliente", "nombre_proyecto", "fecha_servicio", "nombre_operador", "cargo",
-    "bola_limpieza_tuberia_55_cifa", "jostick", "inyector_grasa", "caja_herramientas", "tubo_entrega_50cm_flanche_plano",
-    "caneca_5_galones", "caneca_55_galones", "pimpinas_5_6_galones", "manguera_bicolor", "juego_llaves_x3_piezas",
-    "pinza_picolor", "bristol_14mm", "bristol_12mm", "juego_llaves_bristol_x9", "cortafrio", "pinzas_punta",
-    "llave_expansiva_15", "maseta", "tubo_para_abrazadera", "llave_11", "llave_10", "llave_13", "llave_14", "llave_17",
-    "llave_19", "llave_22", "llave_24", "llave_27", "llave_30", "llave_32", "destornillador_pala_65x125mm",
-    "destornillador_pala_8x150mm", "destornillador_pala_55x125mm", "destornillador_estrella_ph3x150mm",
-    "destornillador_estrella_ph2x100mm", "destornillador_estrella_ph3x75mm", "cunete_grasa_5_galones",
-    "bomba_concreto_pc506_309_cifa_estado", "bomba_concreto_pc506_309_cifa_observacion",
-    "bomba_concreto_pc607_411_cifa_estado", "bomba_concreto_pc607_411_cifa_observacion",
-    "bomba_concreto_tb30_turbosol_estado", "bomba_concreto_tb30_turbosol_observacion",
-    "bomba_concreto_tb50_turbosol_estado", "bomba_concreto_tb50_turbosol_observacion",
-    "tubo_3mt_flanche_plano_estado", "tubo_3mt_flanche_plano_observacion",
-    "tubo_2mt_flanche_plano_estado", "tubo_2mt_flanche_plano_observacion",
-    "tubo_1mt_flanche_plano_estado", "tubo_1mt_flanche_plano_observacion",
-    "abrazadera_3_pulg_flanche_plano_estado", "abrazadera_3_pulg_flanche_plano_observacion",
-    "empaque_3_pulg_flanche_plano_estado", "empaque_3_pulg_flanche_plano_observacion",
-    "abrazadera_4_pulg_flanche_plano_estado", "abrazadera_4_pulg_flanche_plano_observacion",
-    "empaque_4_pulg_flanche_plano_estado", "empaque_4_pulg_flanche_plano_observacion",
-    "abrazadera_5_pulg_flanche_plano_estado", "abrazadera_5_pulg_flanche_plano_observacion",
-    "empaque_5_pulg_flanche_plano_estado", "empaque_5_pulg_flanche_plano_observacion",
-    "codo_45_r1000_5_pulg_flanche_estado", "codo_45_r1000_5_pulg_flanche_observacion",
-    "codo_90_r500_5_pulg_flanche_estado", "codo_90_r500_5_pulg_flanche_observacion",
-    "codo_salida_6_pulg_turbosol_estado", "codo_salida_6_pulg_turbosol_observacion",
-    "manguera_3_pulg_x10mt_estado", "manguera_3_pulg_x10mt_observacion",
-    "manguera_5_pulg_x6mt_estado", "manguera_5_pulg_x6mt_observacion",
-    "reduccion_5_a_4_pulg_estado", "reduccion_5_a_4_pulg_observacion",
-    "valvula_guillotina_55_estado", "valvula_guillotina_55_observacion",
-    "extintor_estado", "extintor_observacion",
-    "botiquin_estado", "botiquin_observacion",
+    
+    // Accesorios (buena/mala)
+    "bola_limpieza_tuberia_55_cifa_buena", "bola_limpieza_tuberia_55_cifa_mala",
+    "jostick_buena", "jostick_mala",
+    "inyector_grasa_buena", "inyector_grasa_mala",
+    "caja_herramientas_buena", "caja_herramientas_mala",
+    "tubo_entrega_50cm_flanche_plano_buena", "tubo_entrega_50cm_flanche_plano_mala",
+    "caneca_5_galones_buena", "caneca_5_galones_mala",
+    "caneca_55_galones_buena", "caneca_55_galones_mala",
+    "pimpinas_5_6_galones_buena", "pimpinas_5_6_galones_mala",
+    "manguera_bicolor_buena", "manguera_bicolor_mala",
+    "juego_llaves_x3_piezas_buena", "juego_llaves_x3_piezas_mala",
+    "pinza_picolor_buena", "pinza_picolor_mala",
+    "bristol_14mm_buena", "bristol_14mm_mala",
+    "bristol_12mm_buena", "bristol_12mm_mala",
+    "juego_llaves_bristol_x9_buena", "juego_llaves_bristol_x9_mala",
+    "cortafrio_buena", "cortafrio_mala",
+    "pinzas_punta_buena", "pinzas_punta_mala",
+    "llave_expansiva_15_buena", "llave_expansiva_15_mala",
+    "maseta_buena", "maseta_mala",
+    "tubo_para_abrazadera_buena", "tubo_para_abrazadera_mala",
+    
+    // Llaves y destornilladores
+    "llave_11_buena", "llave_11_mala",
+    "llave_10_buena", "llave_10_mala",
+    "llave_13_buena", "llave_13_mala",
+    "llave_14_buena", "llave_14_mala",
+    "llave_17_buena", "llave_17_mala",
+    "llave_19_buena", "llave_19_mala",
+    "llave_22_buena", "llave_22_mala",
+    "llave_24_buena", "llave_24_mala",
+    "llave_27_buena", "llave_27_mala",
+    "llave_30_buena", "llave_30_mala",
+    "llave_32_buena", "llave_32_mala",
+    "destornillador_pala_65x125mm_buena", "destornillador_pala_65x125mm_mala",
+    "destornillador_pala_8x150mm_buena", "destornillador_pala_8x150mm_mala",
+    "destornillador_pala_55x125mm_buena", "destornillador_pala_55x125mm_mala",
+    "destornillador_estrella_ph3x150mm_buena", "destornillador_estrella_ph3x150mm_mala",
+    "destornillador_estrella_ph2x100mm_buena", "destornillador_estrella_ph2x100mm_mala",
+    "destornillador_estrella_ph3x75mm_buena", "destornillador_estrella_ph3x75mm_mala",
+    "cunete_grasa_5_galones_buena", "cunete_grasa_5_galones_mala",
+    
+    // Tubería y accesorios
+    "tubo_3mt_cantidad_buena", "tubo_3mt_cantidad_mala",
+    "tubo_2mt_cantidad_buena", "tubo_2mt_cantidad_mala",
+    "tubo_1mt_cantidad_buena", "tubo_1mt_cantidad_mala",
+    "abrazadera_3_cantidad_buena", "abrazadera_3_cantidad_mala",
+    "abrazadera_4_cantidad_buena", "abrazadera_4_cantidad_mala",
+    "abrazadera_5_cantidad_buena", "abrazadera_5_cantidad_mala",
+    "abrazadera_arranque_5_cifa_buena", "abrazadera_arranque_5_cifa_mala",
+    "abrazadera_arranque_6_turbosol_buena", "abrazadera_arranque_6_turbosol_mala",
+    "empaque_3_cantidad_buena", "empaque_3_cantidad_mala",
+    "empaque_4_cantidad_buena", "empaque_4_cantidad_mala",
+    "empaque_5_cantidad_buena", "empaque_5_cantidad_mala",
+    "atrapa_diablos_cantidad_buena", "atrapa_diablos_cantidad_mala",
+    
+    // Codos
+    "codo_45_r1000_buena", "codo_45_r1000_mala",
+    "codo_45_r500_buena", "codo_45_r500_mala",
+    "codo_45_r275_buena", "codo_45_r275_mala",
+    "codo_45_r250_buena", "codo_45_r250_mala",
+    "codo_90_r1000_buena", "codo_90_r1000_mala",
+    "codo_90_r500_buena", "codo_90_r500_mala",
+    "codo_90_r275_buena", "codo_90_r275_mala",
+    "codo_90_r250_buena", "codo_90_r250_mala",
+    "codo_salida_5_cifa_buena", "codo_salida_5_cifa_mala",
+    "codo_salida_6_turbosol_buena", "codo_salida_6_turbosol_mala",
+    "empaque_codo_salida_cifa_buena", "empaque_codo_salida_cifa_mala",
+    
+    // Mangueras
+    "manguera_3x10_buena", "manguera_3x10_mala",
+    "manguera_3x8_buena", "manguera_3x8_mala",
+    "manguera_3x6_buena", "manguera_3x6_mala",
+    "manguera_4x10_buena", "manguera_4x10_mala",
+    "manguera_4x6_buena", "manguera_4x6_mala",
+    "manguera_5x6_buena", "manguera_5x6_mala",
+    
+    // Reducciones y otros
+    "reduccion_4_a_3_buena", "reduccion_4_a_3_mala",
+    "reduccion_5_a_4_buena", "reduccion_5_a_4_mala",
+    "reduccion_6_a_5_buena", "reduccion_6_a_5_mala",
+    "miple_cantidad_buena", "miple_cantidad_mala",
+    "valvula_guillotina_55_buena", "valvula_guillotina_55_mala",
+    "extintor_buena", "extintor_mala",
+    "botiquin_buena", "botiquin_mala",
+    
+    // Observaciones
     "observaciones_generales"
   ];
+
+  // Campos opcionales (seriales de bombas y empresa_id)
+  const optional = [
+    "empresa_id",
+    "bomba_pc506_seriales",
+    "bomba_pc607_seriales",
+    "bomba_tb30_seriales",
+    "bomba_tb50_seriales"
+  ];
+
+  // Validar campos requeridos
   const faltantes = required.filter(k => body[k] === undefined || body[k] === null);
   if (faltantes.length) return res.status(400).json({ error: "Faltan campos requeridos", faltantes });
 
-  // Normalización de campos tipo opción (estado)
-  const estadoFields = new Set([
-    "bomba_concreto_pc506_309_cifa_estado", "bomba_concreto_pc607_411_cifa_estado", "bomba_concreto_tb30_turbosol_estado",
-    "bomba_concreto_tb50_turbosol_estado", "tubo_3mt_flanche_plano_estado", "tubo_2mt_flanche_plano_estado",
-    "tubo_1mt_flanche_plano_estado", "abrazadera_3_pulg_flanche_plano_estado", "empaque_3_pulg_flanche_plano_estado",
-    "abrazadera_4_pulg_flanche_plano_estado", "empaque_4_pulg_flanche_plano_estado", "abrazadera_5_pulg_flanche_plano_estado",
-    "empaque_5_pulg_flanche_plano_estado", "codo_45_r1000_5_pulg_flanche_estado", "codo_90_r500_5_pulg_flanche_estado",
-    "codo_salida_6_pulg_turbosol_estado", "manguera_3_pulg_x10mt_estado", "manguera_5_pulg_x6mt_estado",
-    "reduccion_5_a_4_pulg_estado", "valvula_guillotina_55_estado", "extintor_estado", "botiquin_estado"
-  ]);
-  function normalizeEstado(val) {
-    if (val === undefined || val === null) return "BUENA";
-    if (typeof val === "string") {
-      const s = val.trim().toUpperCase();
-      if (["BUENA", "MALA"].includes(s)) return s;
-      if (["B", "GOOD"].includes(s)) return "BUENA";
-      if (["M", "BAD"].includes(s)) return "MALA";
-      return "BUENA";
-    }
-    return "BUENA";
+  // Campos de tipo entero (cantidades buena/mala)
+  const integerFields = new Set(required.filter(f => f.endsWith('_buena') || f.endsWith('_mala')));
+
+  // Normalizar campos enteros
+  function normalizeInteger(val) {
+    if (val === undefined || val === null || val === '') return 0;
+    const parsed = parseInt(val, 10);
+    return isNaN(parsed) ? 0 : parsed;
   }
 
-  // Normaliza los campos de estado
-  required.forEach(f => {
-    if (estadoFields.has(f) && body[f] !== undefined) {
-      body[f] = normalizeEstado(body[f]);
+  // Normalizar campos de seriales (texto)
+  function normalizeSeriales(val) {
+    if (val === undefined || val === null) return '';
+    return String(val).trim();
+  }
+
+  // Preparar campos y valores para la inserción
+  const fields = [...required];
+  const values = required.map(f => {
+    if (integerFields.has(f)) {
+      return normalizeInteger(body[f]);
+    }
+    return body[f];
+  });
+
+  // Agregar campos opcionales si están presentes
+  optional.forEach(f => {
+    if (body[f] !== undefined) {
+      fields.push(f);
+      if (f === 'empresa_id') {
+        values.push(body[f] ? parseInt(body[f], 10) : null);
+      } else {
+        // Campos de seriales (texto)
+        values.push(normalizeSeriales(body[f]));
+      }
     }
   });
 
-  const fields = required;
-  const values = fields.map(f => body[f]);
   const placeholders = fields.map((_, i) => `$${i + 1}`).join(", ");
 
   try {
