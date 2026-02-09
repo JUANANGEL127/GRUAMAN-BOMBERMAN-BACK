@@ -18,21 +18,28 @@ try {
 const CRON_TIMEZONE = 'America/Bogota';
 
 // 12:00am (medianoche) - Completar horas de salida faltantes del día anterior
+// Solo aplica si el operador tiene UN ÚNICO registro ese día (sin salida)
+// Si ya tiene turnos completos y dejó uno abierto, NO se completa automáticamente
 cron.schedule('0 0 * * *', async () => {
   try {
     // Obtener la fecha de ayer en zona Colombia
     const ayer = DateTime.now().setZone(CRON_TIMEZONE).minus({ days: 1 }).toISODate();
 
-    // Buscar registros del día anterior sin hora de salida
+    // Buscar operadores que tengan EXACTAMENTE 1 registro ese día Y ese registro no tenga salida
     const registrosSinSalida = await db.query(
-      `SELECT nombre_operador, hora_ingreso, fecha_servicio 
-       FROM horas_jornada 
-       WHERE CAST(fecha_servicio AS date) = $1::date 
-       AND (hora_salida IS NULL OR hora_salida::text = '')`,
+      `SELECT h.id, h.nombre_operador, h.hora_ingreso, h.fecha_servicio 
+       FROM horas_jornada h
+       WHERE CAST(h.fecha_servicio AS date) = $1::date 
+       AND (h.hora_salida IS NULL OR h.hora_salida::text = '')
+       AND (
+         SELECT COUNT(*) FROM horas_jornada h2 
+         WHERE h2.nombre_operador = h.nombre_operador 
+         AND CAST(h2.fecha_servicio AS date) = $1::date
+       ) = 1`,
       [ayer]
     );
 
-    console.log(`[CRON 00:00] Encontrados ${registrosSinSalida.rows.length} registros sin hora de salida para ${ayer}`);
+    console.log(`[CRON 00:00] Encontrados ${registrosSinSalida.rows.length} operadores con único registro sin salida para ${ayer}`);
 
     for (const row of registrosSinSalida.rows) {
       try {
@@ -56,13 +63,13 @@ cron.schedule('0 0 * * *', async () => {
         await db.query(
           `UPDATE horas_jornada 
            SET hora_salida = $1 
-           WHERE nombre_operador = $2 AND CAST(fecha_servicio AS date) = $3::date`,
-          [horaSalidaCalculada, row.nombre_operador, ayer]
+           WHERE id = $2`,
+          [horaSalidaCalculada, row.id]
         );
 
-        console.log(`[CRON 00:00] Completada salida para ${row.nombre_operador}: ${horaIngreso} -> ${horaSalidaCalculada}`);
+        console.log(`[CRON 00:00] Completada salida para ${row.nombre_operador} (id: ${row.id}): ${horaIngreso} -> ${horaSalidaCalculada}`);
       } catch (updateErr) {
-        console.error(`[CRON 00:00] Error actualizando salida para ${row.nombre_operador}:`, updateErr.message);
+        console.error(`[CRON 00:00] Error actualizando salida para ${row.nombre_operador} (id: ${row.id}):`, updateErr.message);
       }
     }
   } catch (err) {
@@ -109,19 +116,12 @@ router.post("/ingreso", async (req, res) => {
     const fechaDia = normalizeFechaToBogota(fecha_servicio);
     if (!fechaDia) return res.status(400).json({ error: "fecha_servicio inválida" });
 
-    // Verificar existencia por DÍA (no por timestamp completo) para evitar doble registro el mismo día
-    const existe = await db.query(
-      "SELECT 1 FROM horas_jornada WHERE nombre_operador = $1 AND CAST(fecha_servicio AS date) = $2::date",
-      [nombre_operador, fechaDia]
-    );
-    if (existe.rows.length > 0) {
-      return res.status(409).json({ error: "Ya existe registro de ingreso para ese operador y fecha" });
-    }
-
-    await db.query(
+    // Permitir múltiples registros por operador/día (turnos partidos, pausas, etc.)
+    const result = await db.query(
       `INSERT INTO horas_jornada (
         nombre_cliente, nombre_proyecto, fecha_servicio, nombre_operador, cargo, empresa_id, hora_ingreso
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id`,
       [
         nombre_cliente,
         nombre_proyecto,
@@ -133,7 +133,7 @@ router.post("/ingreso", async (req, res) => {
       ]
     );
 
-    return res.json({ success: true });
+    return res.json({ success: true, id: result.rows[0].id });
   } catch (err) {
     console.error("Error registrando ingreso:", err);
     return res.status(500).json({ error: "Error registrando ingreso", detalle: err.message });
@@ -153,23 +153,31 @@ router.post("/salida", async (req, res) => {
     const fechaDia = normalizeFechaToBogota(fecha_servicio);
     if (!fechaDia) return res.status(400).json({ error: "fecha_servicio inválida" });
 
-    // Buscar por fecha (solo día) para encontrar el registro correspondiente
-    const existe = await db.query(
-      "SELECT hora_ingreso FROM horas_jornada WHERE nombre_operador = $1 AND CAST(fecha_servicio AS date) = $2::date",
+    // Buscar el último registro sin hora_salida para ese operador y fecha
+    const registroPendiente = await db.query(
+      `SELECT id, hora_ingreso FROM horas_jornada 
+       WHERE nombre_operador = $1 
+       AND CAST(fecha_servicio AS date) = $2::date 
+       AND (hora_salida IS NULL OR hora_salida::text = '')
+       ORDER BY hora_ingreso DESC 
+       LIMIT 1`,
       [nombre_operador, fechaDia]
     );
-    if (existe.rows.length === 0) {
-      return res.status(404).json({ error: "No existe registro de ingreso para ese operador y fecha" });
+    
+    if (registroPendiente.rows.length === 0) {
+      return res.status(404).json({ error: "No existe registro de ingreso pendiente (sin salida) para ese operador y fecha" });
     }
+
+    const registroId = registroPendiente.rows[0].id;
 
     await db.query(
       `UPDATE horas_jornada
        SET hora_salida = $1
-       WHERE nombre_operador = $2 AND CAST(fecha_servicio AS date) = $3::date`,
-      [hora_salida, nombre_operador, fechaDia]
+       WHERE id = $2`,
+      [hora_salida, registroId]
     );
 
-    return res.json({ success: true });
+    return res.json({ success: true, id: registroId });
   } catch (err) {
     console.error("Error registrando salida:", err);
     return res.status(500).json({ error: "Error registrando salida", detalle: err.message });
