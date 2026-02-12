@@ -156,11 +156,20 @@ router.post('/descargar', async (req, res) => {
     const q = await pool.query(`SELECT * FROM inventario_obra ${where} ORDER BY id DESC LIMIT $${idx}`, [...values, Math.min(50000, parseInt(limit) || 10000)]);
 
     if (formato === 'excel') {
+      // Deduplicar por id (evita filas repetidas)
+      const seen = new Set();
+      const rowsUnicos = (q.rows || []).filter(r => {
+        const id = r?.id;
+        if (id != null && seen.has(id)) return false;
+        if (id != null) seen.add(id);
+        return true;
+      });
+
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Inventario Obra');
 
       // Si no hay filas, devolver un libro vacío con una hoja y salir
-      if (!q.rows || q.rows.length === 0) {
+      if (!rowsUnicos.length) {
         res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition','attachment; filename=inventarios_obra.xlsx');
         await workbook.xlsx.write(res);
@@ -168,7 +177,7 @@ router.post('/descargar', async (req, res) => {
       }
 
       // Formato vertical (ficha): cada registro como bloque Campo | Valor
-      const keys = Object.keys(q.rows[0]);
+      const keys = Object.keys(rowsUnicos[0]);
       
       // Configurar columnas
       ws.columns = [
@@ -191,7 +200,7 @@ router.post('/descargar', async (req, res) => {
 
       let currentRow = 2; // Empezar después del header
 
-      q.rows.forEach((r, index) => {
+      rowsUnicos.forEach((r, index) => {
         // Título del registro
         ws.mergeCells(`A${currentRow}:B${currentRow}`);
         const titleCell = ws.getCell(`A${currentRow}`);

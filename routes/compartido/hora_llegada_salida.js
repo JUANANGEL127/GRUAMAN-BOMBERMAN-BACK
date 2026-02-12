@@ -17,65 +17,89 @@ try {
 
 const CRON_TIMEZONE = 'America/Bogota';
 
+// Calcula hora_salida = hora_ingreso + 7h20min (7.33 horas)
+function calcularHoraSalida(horaIngreso) {
+  const str = String(horaIngreso ?? '').slice(0, 5); // "HH:MM"
+  const [hh, mm] = str.split(':').map(Number);
+  if (isNaN(hh) || isNaN(mm)) return null;
+  let salidaHoras = hh + 7;
+  let salidaMinutos = mm + 20;
+  if (salidaMinutos >= 60) {
+    salidaHoras += 1;
+    salidaMinutos -= 60;
+  }
+  if (salidaHoras >= 24) salidaHoras -= 24;
+  return `${String(salidaHoras).padStart(2, '0')}:${String(salidaMinutos).padStart(2, '0')}`;
+}
+
+// Completar horas de salida faltantes para una fecha.
+// Para cada operador: toma el PRIMER registro sin salida (menor hora_ingreso) y le suma 7h20min.
+async function completarSalidasParaFecha(fecha) {
+  const fechaStr = fecha || DateTime.now().setZone(CRON_TIMEZONE).minus({ days: 1 }).toISODate();
+  // Primer registro sin salida de cada operador ese día (ORDER BY hora_ingreso ASC, LIMIT 1 por operador)
+  const { rows } = await db.query(
+    `SELECT DISTINCT ON (h.nombre_operador) h.id, h.nombre_operador, h.hora_ingreso, h.fecha_servicio
+     FROM horas_jornada h
+     WHERE CAST(h.fecha_servicio AS date) = $1::date
+       AND (h.hora_salida IS NULL OR h.hora_salida::text = '')
+     ORDER BY h.nombre_operador, h.hora_ingreso ASC`,
+    [fechaStr]
+  );
+  const actualizados = [];
+  for (const row of rows) {
+    const horaSalida = calcularHoraSalida(row.hora_ingreso);
+    if (!horaSalida) continue;
+    await db.query(
+      `UPDATE horas_jornada SET hora_salida = $1 WHERE id = $2`,
+      [horaSalida, row.id]
+    );
+    actualizados.push({
+      id: row.id,
+      nombre_operador: row.nombre_operador,
+      hora_ingreso: row.hora_ingreso,
+      hora_salida: horaSalida
+    });
+  }
+  return { fecha: fechaStr, actualizados };
+}
+
 // 12:00am (medianoche) - Completar horas de salida faltantes del día anterior
-// Solo aplica si el operador tiene UN ÚNICO registro ese día (sin salida)
-// Si ya tiene turnos completos y dejó uno abierto, NO se completa automáticamente
+// Para cada operador: completa el PRIMER registro sin salida del día con hora_ingreso + 7h20min
 cron.schedule('0 0 * * *', async () => {
   try {
-    // Obtener la fecha de ayer en zona Colombia
     const ayer = DateTime.now().setZone(CRON_TIMEZONE).minus({ days: 1 }).toISODate();
-
-    // Buscar operadores que tengan EXACTAMENTE 1 registro ese día Y ese registro no tenga salida
-    const registrosSinSalida = await db.query(
-      `SELECT h.id, h.nombre_operador, h.hora_ingreso, h.fecha_servicio 
-       FROM horas_jornada h
-       WHERE CAST(h.fecha_servicio AS date) = $1::date 
-       AND (h.hora_salida IS NULL OR h.hora_salida::text = '')
-       AND (
-         SELECT COUNT(*) FROM horas_jornada h2 
-         WHERE h2.nombre_operador = h.nombre_operador 
-         AND CAST(h2.fecha_servicio AS date) = $1::date
-       ) = 1`,
-      [ayer]
-    );
-
-    console.log(`[CRON 00:00] Encontrados ${registrosSinSalida.rows.length} operadores con único registro sin salida para ${ayer}`);
-
-    for (const row of registrosSinSalida.rows) {
-      try {
-        // Calcular hora de salida = hora_ingreso + 7h20min (7.33 horas)
-        const horaIngreso = String(row.hora_ingreso).slice(0, 5); // "HH:MM"
-        const [hh, mm] = horaIngreso.split(':').map(Number);
-        
-        let salidaHoras = hh + 7;
-        let salidaMinutos = mm + 20;
-        
-        if (salidaMinutos >= 60) {
-          salidaHoras += 1;
-          salidaMinutos -= 60;
-        }
-        if (salidaHoras >= 24) {
-          salidaHoras -= 24;
-        }
-        
-        const horaSalidaCalculada = `${String(salidaHoras).padStart(2, '0')}:${String(salidaMinutos).padStart(2, '0')}`;
-
-        await db.query(
-          `UPDATE horas_jornada 
-           SET hora_salida = $1 
-           WHERE id = $2`,
-          [horaSalidaCalculada, row.id]
-        );
-
-        console.log(`[CRON 00:00] Completada salida para ${row.nombre_operador} (id: ${row.id}): ${horaIngreso} -> ${horaSalidaCalculada}`);
-      } catch (updateErr) {
-        console.error(`[CRON 00:00] Error actualizando salida para ${row.nombre_operador} (id: ${row.id}):`, updateErr.message);
-      }
-    }
+    const { fecha, actualizados } = await completarSalidasParaFecha(ayer);
+    console.log(`[CRON 00:00] Completadas ${actualizados.length} salidas para ${fecha}`);
+    actualizados.forEach(a => console.log(`  - ${a.nombre_operador} (id: ${a.id}): ${a.hora_ingreso} -> ${a.hora_salida}`));
   } catch (err) {
     console.error("[CRON 00:00] Error en cron de completar salidas:", err.message);
   }
 }, { timezone: CRON_TIMEZONE });
+
+// Al iniciar (o al despertar del servidor): completar salidas pendientes de ayer y anteayer.
+// Si el servidor estuvo dormido a medianoche, el cron no corrió; al despertar esto lo corrige.
+(function ejecutarCompletarSalidasAlIniciar() {
+  const delayMs = 8000; // dar tiempo a que la DB y el app estén listos
+  setTimeout(async () => {
+    try {
+      const hoy = DateTime.now().setZone(CRON_TIMEZONE);
+      let total = 0;
+      for (let diasAtras = 1; diasAtras <= 2; diasAtras++) {
+        const fecha = hoy.minus({ days: diasAtras }).toISODate();
+        const { actualizados } = await completarSalidasParaFecha(fecha);
+        total += actualizados.length;
+        if (actualizados.length > 0) {
+          console.log(`[STARTUP] Completadas ${actualizados.length} salidas pendientes de ${fecha}`);
+        }
+      }
+      if (total > 0) {
+        console.log(`[STARTUP] Total: ${total} registros completados al despertar`);
+      }
+    } catch (e) {
+      console.error("[STARTUP] Error completando salidas al iniciar:", e.message);
+    }
+  }, delayMs);
+})();
 
 // Normaliza la fecha de entrada a YYYY-MM-DD en zona America/Bogota
 function normalizeFechaToBogota(fechaInput) {
@@ -200,6 +224,25 @@ router.post("/salida", async (req, res) => {
   } catch (err) {
     console.error("Error registrando salida:", err);
     return res.status(500).json({ error: "Error registrando salida", detalle: err.message });
+  }
+});
+
+// POST /horas_jornada/completar-salidas - Completar salidas faltantes manualmente
+// Body opcional: { fecha: "YYYY-MM-DD" } - si no se envía, usa ayer
+// Útil para corregir datos cuando el cron no corrió o para fechas pasadas
+router.post("/completar-salidas", async (req, res) => {
+  try {
+    const fecha = req.body?.fecha ? normalizeFechaToBogota(req.body.fecha) : null;
+    const { fecha: fechaProcesada, actualizados } = await completarSalidasParaFecha(fecha);
+    return res.json({
+      success: true,
+      fecha: fechaProcesada,
+      actualizados: actualizados.length,
+      detalle: actualizados
+    });
+  } catch (err) {
+    console.error("Error completando salidas:", err);
+    return res.status(500).json({ error: "Error completando salidas", detalle: err.message });
   }
 });
 

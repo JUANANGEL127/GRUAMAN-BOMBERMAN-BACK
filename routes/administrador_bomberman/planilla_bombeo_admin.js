@@ -140,7 +140,7 @@ async function generarPDFPorPlanilla(r) {
       doc.moveDown();
       // incluir campos importantes de planilla_bombeo
       const campos = [
-        'hora_llegada_obra','hora_salida_obra','hora_inicio_acpm','hora_final_acpm','horometro_inicial','horometro_final',
+        'hora_inicio_acpm','hora_final_acpm','horometro_inicial','horometro_final',
         'nombre_auxiliar','total_metros_cubicos_bombeados','remision','metros','observaciones'
       ];
       campos.forEach(k => {
@@ -203,11 +203,20 @@ router.post('/descargar', async (req, res) => {
     );
 
     if (formato === 'excel') {
+      // Deduplicar por id (evita filas repetidas)
+      const seen = new Set();
+      const rowsUnicos = (q.rows || []).filter(r => {
+        const id = r?.id;
+        if (id != null && seen.has(id)) return false;
+        if (id != null) seen.add(id);
+        return true;
+      });
+
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Planilla Bombeo');
 
       // Si no hay filas, devolver un libro vacío con una hoja y salir
-      if (!q.rows || q.rows.length === 0) {
+      if (!rowsUnicos.length) {
         res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition','attachment; filename=planilla_bombeo.xlsx');
         await workbook.xlsx.write(res);
@@ -215,7 +224,7 @@ router.post('/descargar', async (req, res) => {
       }
 
       // Usar las claves de la primera fila para construir todas las columnas dinámicamente
-      const keys = Object.keys(q.rows[0]);
+      const keys = Object.keys(rowsUnicos[0]);
       ws.columns = keys.map(k => ({
         header: k.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
         key: k,
@@ -223,7 +232,7 @@ router.post('/descargar', async (req, res) => {
       }));
 
       // Añadir filas completas; formatear fecha_servicio y convertir valores no primitivos
-      q.rows.forEach(r => {
+      rowsUnicos.forEach(r => {
         const rowObj = {};
         keys.forEach(k => {
           let val = r[k];

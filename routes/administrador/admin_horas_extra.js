@@ -564,11 +564,14 @@ async function handleDescargar(req, res) {
     );
 
     const rows = [];
+    const idsVistos = new Set();
     // Objeto para agrupar por MES y luego por usuario
     const resumenPorMes = {};
     const nombresMeses = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
     for (const r of q.rows) {
+      if (r.id != null && idsVistos.has(r.id)) continue;
+      if (r.id != null) idsVistos.add(r.id);
       const fecha = r.fecha_servicio && r.fecha_servicio.toISOString ? r.fecha_servicio.toISOString().slice(0,10) : formatDateOnly(r.fecha_servicio);
       const calculos = (r.hora_ingreso && r.hora_salida && (r.minutos_almuerzo !== undefined))
         ? calcularHoras({ hora_ingreso: r.hora_ingreso, hora_salida: r.hora_salida, minutos_almuerzo: r.minutos_almuerzo, fecha })

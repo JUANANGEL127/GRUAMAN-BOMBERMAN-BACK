@@ -171,6 +171,13 @@ global.db = pool;
     );
   `);
 
+  // Permitir NULL en hora_llegada_obra y hora_salida_obra (ya no se usan en planilla de bombeo)
+  await pool.query(`
+    ALTER TABLE planilla_bombeo 
+      ALTER COLUMN hora_llegada_obra DROP NOT NULL,
+      ALTER COLUMN hora_salida_obra DROP NOT NULL
+  `).catch(() => {});
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS permiso_trabajo (
       id SERIAL PRIMARY KEY,

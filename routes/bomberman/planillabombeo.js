@@ -58,8 +58,6 @@ async function generarPDF(planilla, remisiones) {
       doc.text(`Proyecto: ${planilla.nombre_proyecto || "N/A"}`);
       doc.text(`Fecha de Servicio: ${planilla.fecha_servicio || "N/A"}`);
       doc.text(`Bomba Número: ${planilla.bomba_numero || "N/A"}`);
-      doc.text(`Hora Llegada Obra: ${planilla.hora_llegada_obra || "N/A"}`);
-      doc.text(`Hora Salida Obra: ${planilla.hora_salida_obra || "N/A"}`);
       doc.text(`Galones Inicio ACPM: ${planilla.galones_inicio_acpm || "N/A"}`);
       doc.text(`Galones Final ACPM: ${planilla.galones_final_acpm || "N/A"}`);
       doc.text(`Galones Pinpina: ${planilla.galones_pinpina || "N/A"}`);
@@ -138,8 +136,6 @@ router.post("/", async (req, res) => {
     nombre_proyecto,
     fecha_servicio,
     bomba_numero,
-    hora_llegada_obra,
-    hora_salida_obra,
     galones_inicio_acpm,
     galones_final_acpm,
     galones_pinpina,
@@ -157,8 +153,6 @@ router.post("/", async (req, res) => {
     nombre_proyecto,
     fecha_servicio,
     bomba_numero,
-    hora_llegada_obra,
-    hora_salida_obra,
     galones_inicio_acpm,
     galones_final_acpm,
     galones_pinpina,
@@ -170,37 +164,42 @@ router.post("/", async (req, res) => {
   });
   console.log("Remisiones recibidas:", remisiones);
 
-  // Formatear solo los campos TIME correctos
-  hora_llegada_obra = formatTime(hora_llegada_obra);
-  hora_salida_obra = formatTime(hora_salida_obra);
+  // Validar parámetros obligatorios y devolver detalle de lo que falta
+  const faltantes = [];
+  if (!nombre_cliente) faltantes.push("nombre_cliente");
+  if (!nombre_proyecto) faltantes.push("nombre_proyecto");
+  if (!fecha_servicio) faltantes.push("fecha_servicio");
+  if (!bomba_numero) faltantes.push("bomba_numero");
+  if (galones_inicio_acpm == null || galones_inicio_acpm === "") faltantes.push("galones_inicio_acpm");
+  if (galones_final_acpm == null || galones_final_acpm === "") faltantes.push("galones_final_acpm");
+  if (galones_pinpina == null || galones_pinpina === "") faltantes.push("galones_pinpina");
+  if (horometro_inicial == null || horometro_inicial === "") faltantes.push("horometro_inicial");
+  if (horometro_final == null || horometro_final === "") faltantes.push("horometro_final");
+  if (!nombre_operador) faltantes.push("nombre_operador");
+  if (!nombre_auxiliar) faltantes.push("nombre_auxiliar");
+  if (total_metros_cubicos_bombeados == null || total_metros_cubicos_bombeados === "") faltantes.push("total_metros_cubicos_bombeados");
+  if (!Array.isArray(remisiones)) faltantes.push("remisiones (debe ser un array)");
+  else if (remisiones.length === 0) faltantes.push("remisiones (array vacío, debe tener al menos una)");
 
-  // Validar parámetros obligatorios
-  if (
-    !nombre_cliente || !nombre_proyecto || !fecha_servicio || !bomba_numero ||
-    !hora_llegada_obra || !hora_salida_obra ||
-    galones_inicio_acpm == null || galones_final_acpm == null ||
-    galones_pinpina == null || // <-- validación nuevo campo
-    horometro_inicial == null || horometro_final == null ||
-    !nombre_operador || !nombre_auxiliar || total_metros_cubicos_bombeados == null ||
-    !Array.isArray(remisiones) || remisiones.length === 0
-  ) {
-    return res.status(400).json({ error: "Faltan parámetros obligatorios o remisiones no es un array válido" });
+  if (faltantes.length > 0) {
+    return res.status(400).json({
+      error: "Faltan parámetros obligatorios o remisiones no es un array válido",
+      faltantes
+    });
   }
 
   try {
     // 1. Insertar la planilla de bombeo
     const result = await db.query(
       `INSERT INTO planilla_bombeo 
-        (nombre_cliente, nombre_proyecto, fecha_servicio, bomba_numero, hora_llegada_obra, hora_salida_obra, galones_inicio_acpm, galones_final_acpm, galones_pinpina, horometro_inicial, horometro_final, nombre_operador, nombre_auxiliar, total_metros_cubicos_bombeados)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        (nombre_cliente, nombre_proyecto, fecha_servicio, bomba_numero, galones_inicio_acpm, galones_final_acpm, galones_pinpina, horometro_inicial, horometro_final, nombre_operador, nombre_auxiliar, total_metros_cubicos_bombeados)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING id`,
       [
         nombre_cliente,
         nombre_proyecto,
         fecha_servicio,
         bomba_numero,
-        hora_llegada_obra,
-        hora_salida_obra,
         galones_inicio_acpm,
         galones_final_acpm,
         galones_pinpina, // <-- nuevo campo
@@ -260,8 +259,6 @@ router.post("/", async (req, res) => {
       nombre_proyecto,
       fecha_servicio,
       bomba_numero,
-      hora_llegada_obra,
-      hora_salida_obra,
       galones_inicio_acpm,
       galones_final_acpm,
       galones_pinpina,
@@ -346,8 +343,6 @@ router.get("/exportar", async (req, res) => {
       { header: "Nombre Proyecto", key: "nombre_proyecto", width: 30 },
       { header: "Fecha Servicio", key: "fecha_servicio", width: 15 },
       { header: "Bomba Número", key: "bomba_numero", width: 15 },
-      { header: "Hora Llegada Obra", key: "hora_llegada_obra", width: 20 },
-      { header: "Hora Salida Obra", key: "hora_salida_obra", width: 20 },
       { header: "Galones Inicio ACPM", key: "galones_inicio_acpm", width: 20 },
       { header: "Galones Final ACPM", key: "galones_final_acpm", width: 20 },
       { header: "Galones Pinpina", key: "galones_pinpina", width: 20 },

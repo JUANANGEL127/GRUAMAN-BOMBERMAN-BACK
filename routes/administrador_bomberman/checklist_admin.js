@@ -260,69 +260,50 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
     const filtrados = q.rows.map(filtraChecklist).filter(r => r !== null);
 
     if (formato === 'excel') {
-      // --- CAMBIO: Usar SIEMPRE el template si existe, y rellenar con los datos del primer registro ---
-      const tplPath = path.join(process.cwd(), 'templates', 'checklist_admin_template.xlsx');
+      // Deduplicar por id (evita filas repetidas)
+      const seen = new Set();
+      const rowsUnicos = filtrados.filter(r => {
+        const id = r?.id;
+        if (id != null && seen.has(id)) return false;
+        if (id != null) seen.add(id);
+        return true;
+      });
+
+      // Excel plano: un registro por fila, cada campo en columna (sin template)
+      // Solo registros con al menos un campo REGULAR o MALO (no solo BUENO)
       const workbook = new ExcelJS.Workbook();
-      let usedTemplate = false;
-      if (fs.existsSync(tplPath) && filtrados.length > 0) {
-        await workbook.xlsx.readFile(tplPath);
-        const data = {};
-        Object.keys(filtrados[0]).forEach(k => {
-          let v = filtrados[0][k];
-          if (k === 'fecha_servicio') v = v ? (new Date(v)).toISOString().slice(0,10) : '';
-          else if (v === null || v === undefined) v = '';
-          else if (typeof v === 'object') { try { v = JSON.stringify(v); } catch(e){ v = String(v); } }
-          data[k] = String(v);
-        });
-        workbook.eachSheet(sheet => {
-          sheet.eachRow(row => {
-            row.eachCell(cell => {
-              if (typeof cell.value === 'string') {
-                cell.value = cell.value.replace(/{{\s*([\w]+)\s*}}/g, (m, p1) => (data[p1] !== undefined ? data[p1] : ''));
-              } else if (cell.value && typeof cell.value === 'object' && cell.value.richText) {
-                const txt = cell.value.richText.map(t => t.text).join('');
-                const replaced = txt.replace(/{{\s*([\w]+)\s*}}/g, (m, p1) => (data[p1] !== undefined ? data[p1] : ''));
-                cell.value = replaced;
-              }
-            });
-          });
-        });
-        usedTemplate = true;
-      } else {
-        // fallback plano
-        const ws = workbook.addWorksheet('Checklist Bombeo');
-        if (!filtrados || filtrados.length === 0) {
-          res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-          res.setHeader('Content-Disposition','attachment; filename=checklist.xlsx');
-          await workbook.xlsx.write(res);
-          return res.end();
-        }
-        const keys = Object.keys(filtrados[0]);
-        ws.columns = keys.map(k => ({
-          header: k.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
-          key: k,
-          width: 20
-        }));
-        filtrados.forEach(r => {
-          const rowObj = {};
-          keys.forEach(k => {
-            let val = r[k];
-            if (k === 'fecha_servicio') {
-              val = val ? (new Date(val)).toISOString().slice(0,10) : '';
-            } else if (val === null || val === undefined) {
-              val = '';
-            } else if (typeof val === 'object') {
-              try { val = JSON.stringify(val); } catch (e) { val = String(val); }
-            }
-            rowObj[k] = val;
-          });
-          ws.addRow(rowObj);
-        });
-        ws.columns.forEach(col => {
-          if (!col.width || col.width < 12) col.width = 12;
-          if (col.width > 60) col.width = 60;
-        });
+      const ws = workbook.addWorksheet('Checklist');
+      if (!rowsUnicos.length) {
+        res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition','attachment; filename=checklist.xlsx');
+        await workbook.xlsx.write(res);
+        return res.end();
       }
+      const keys = Object.keys(rowsUnicos[0]);
+      ws.columns = keys.map(k => ({
+        header: k.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
+        key: k,
+        width: 20
+      }));
+      rowsUnicos.forEach(r => {
+        const rowObj = {};
+        keys.forEach(k => {
+          let val = r[k];
+          if (k === 'fecha_servicio') {
+            val = val ? (new Date(val)).toISOString().slice(0,10) : '';
+          } else if (val === null || val === undefined) {
+            val = '';
+          } else if (typeof val === 'object') {
+            try { val = JSON.stringify(val); } catch (e) { val = String(val); }
+          }
+          rowObj[k] = val;
+        });
+        ws.addRow(rowObj);
+      });
+      ws.columns.forEach(col => {
+        if (!col.width || col.width < 12) col.width = 12;
+        if (col.width > 60) col.width = 60;
+      });
       res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition','attachment; filename=checklist.xlsx');
       await workbook.xlsx.write(res);
