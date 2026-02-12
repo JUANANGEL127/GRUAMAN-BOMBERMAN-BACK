@@ -116,7 +116,26 @@ router.post("/ingreso", async (req, res) => {
     const fechaDia = normalizeFechaToBogota(fecha_servicio);
     if (!fechaDia) return res.status(400).json({ error: "fecha_servicio inválida" });
 
-    // Permitir múltiples registros por operador/día (turnos partidos, pausas, etc.)
+    // Verificar si hay un registro abierto (sin hora de salida) para ese operador y fecha
+    const registroAbierto = await db.query(
+      `SELECT id, hora_ingreso FROM horas_jornada 
+       WHERE nombre_operador = $1 
+       AND CAST(fecha_servicio AS date) = $2::date 
+       AND (hora_salida IS NULL OR hora_salida::text = '')`,
+      [nombre_operador, fechaDia]
+    );
+
+    if (registroAbierto.rows.length > 0) {
+      return res.status(409).json({ 
+        error: "Ya existe un registro de ingreso sin hora de salida. Debe registrar la salida antes de un nuevo ingreso.",
+        registro_pendiente: {
+          id: registroAbierto.rows[0].id,
+          hora_ingreso: registroAbierto.rows[0].hora_ingreso
+        }
+      });
+    }
+
+    // Crear nuevo registro de ingreso
     const result = await db.query(
       `INSERT INTO horas_jornada (
         nombre_cliente, nombre_proyecto, fecha_servicio, nombre_operador, cargo, empresa_id, hora_ingreso
