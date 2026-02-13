@@ -1,7 +1,11 @@
 import express from 'express';
 import ExcelJS from 'exceljs';
-import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
+import fs from 'fs';
+import path from 'path';
+import libre from 'libreoffice-convert';
+import dotenv from 'dotenv';
+dotenv.config();
 const router = express.Router();
 
 // Helper: formatea string "YYYY-MM-DD" de forma segura (evita shift TZ)
@@ -107,32 +111,60 @@ router.post('/buscar', async (req, res) => {
   }
 });
 
-// genera PDF de una inspección en una sola hoja (Buffer)
-async function generarPDFPorInventarioObra(r) {
-  return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument({ margin: 30, size: 'A4' });
-      const bufs = [];
-      doc.on('data', b => bufs.push(b));
-      doc.on('end', () => resolve(Buffer.concat(bufs)));
 
-      doc.fontSize(16).text(`Inventario Obra - ID: ${r.id}`, { align: 'center' });
-      doc.moveDown();
-      doc.fontSize(12).text(`Fecha: ${r.fecha_servicio ? (new Date(r.fecha_servicio)).toISOString().slice(0,10) : ''}`);
-      doc.text(`Cliente: ${r.nombre_cliente || ''}`);
-      doc.text(`Proyecto: ${r.nombre_proyecto || ''}`);
-      doc.text(`Operador: ${r.nombre_operador || ''}`);
-      doc.text(`Cargo: ${r.cargo || ''}`);
-      doc.moveDown();
-      // incluir todos los campos del inventario_obra
-      Object.entries(r).forEach(([k, v]) => {
-        if (v !== undefined && v !== null && String(v).trim() !== '' && !['id','fecha_servicio','nombre_cliente','nombre_proyecto','nombre_operador','cargo'].includes(k)) {
-          doc.fontSize(11).text(`${k.replace(/_/g,' ')}: ${v}`);
+// Genera un Excel llenando el template con los datos de un registro
+async function generarExcelPorInventarioObra(r) {
+  const candidatePaths = [
+    path.join(process.cwd(), 'templates', 'inventario_obras_admin_template.xlsx'),
+    path.join(process.cwd(), 'routes', 'templates', 'inventario_obras_admin_template.xlsx'),
+    path.join(process.cwd(), 'routes', 'administrador_bomberman', 'templates', 'inventario_obras_admin_template.xlsx')
+  ];
+  const tplPath = candidatePaths.find(p => fs.existsSync(p));
+  if (!tplPath) throw new Error('Template XLSX no encontrado en ninguna ruta esperada.');
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(tplPath);
+
+  const data = {};
+  Object.keys(r).forEach(k => {
+    let v = r[k];
+    if (k === 'fecha_servicio') v = v ? (new Date(v)).toISOString().slice(0,10) : '';
+    else if (v === null || v === undefined) v = '';
+    else if (typeof v === 'object') { try { v = JSON.stringify(v); } catch(e){ v = String(v); } }
+    data[k] = String(v);
+  });
+  workbook.eachSheet(sheet => {
+    sheet.eachRow(row => {
+      row.eachCell(cell => {
+        if (typeof cell.value === 'string') {
+          cell.value = cell.value.replace(/{{\s*([\w]+)\s*}}/g, (m, p1) => (data[p1] !== undefined ? data[p1] : ''));
+        } else if (cell.value && typeof cell.value === 'object' && cell.value.richText) {
+          const txt = cell.value.richText.map(t => t.text).join('');
+          const replaced = txt.replace(/{{\s*([\w]+)\s*}}/g, (m, p1) => (data[p1] !== undefined ? data[p1] : ''));
+          cell.value = replaced;
         }
       });
-      doc.end();
-    } catch (err) { reject(err); }
+    });
   });
+
+  const buf = await workbook.xlsx.writeBuffer();
+  return buf;
+}
+
+// Genera un PDF a partir del Excel llenado
+async function generarPDFPorInventarioObra(r) {
+  const xlsxBuf = await generarExcelPorInventarioObra(r);
+  const sofficePath = process.env.LIBREOFFICE_PATH || "/Applications/LibreOffice.app/Contents/MacOS/soffice";
+  if (!fs.existsSync(sofficePath)) {
+    throw new Error('LibreOffice (soffice) no está instalado en el entorno. No es posible generar PDF con layout.');
+  }
+  const pdfBuf = await new Promise((resolve, reject) => {
+    libre.convert(xlsxBuf, '.pdf', undefined, (err, done) => {
+      if (err) return reject(err);
+      resolve(done);
+    });
+  });
+  return pdfBuf;
 }
 
 // POST /descargar -> genera XLSX o ZIP de PDFs
@@ -142,6 +174,8 @@ router.post('/descargar', async (req, res) => {
     const { nombre, cedula, obra, constructora, fecha_inicio, fecha_fin, formato = 'excel', limit = 10000 } = req.body || {};
     const startDate = formatDateOnly(fecha_inicio);
     const endDate = formatDateOnly(fecha_fin) || todayDateString();
+
+    console.log(`[DESCARGAR] Formato solicitado: ${formato}`);
 
     const clauses = [];
     const values = [];
@@ -154,150 +188,129 @@ router.post('/descargar', async (req, res) => {
 
     const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
     const q = await pool.query(`SELECT * FROM inventario_obra ${where} ORDER BY id DESC LIMIT $${idx}`, [...values, Math.min(50000, parseInt(limit) || 10000)]);
+    const rows = (q.rows || []);
+
+    console.log(`[DESCARGAR] Registros encontrados: ${rows.length}`);
 
     if (formato === 'excel') {
-      // Deduplicar por id (evita filas repetidas)
-      const seen = new Set();
-      const rowsUnicos = (q.rows || []).filter(r => {
-        const id = r?.id;
-        if (id != null && seen.has(id)) return false;
-        if (id != null) seen.add(id);
-        return true;
-      });
-
-      const workbook = new ExcelJS.Workbook();
-      const ws = workbook.addWorksheet('Inventario Obra');
-
-      // Si no hay filas, devolver un libro vacío con una hoja y salir
-      if (!rowsUnicos.length) {
+      if (!rows.length) {
+        const workbook = new ExcelJS.Workbook();
+        const ws = workbook.addWorksheet('Inventario Obra');
         res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition','attachment; filename=inventarios_obra.xlsx');
+        res.setHeader('Content-Disposition','attachment; filename="inventarios_obra.xlsx"');
         await workbook.xlsx.write(res);
         return res.end();
       }
-
-      // Formato vertical (ficha): cada registro como bloque Campo | Valor
-      const keys = Object.keys(rowsUnicos[0]);
       
-      // Configurar columnas
-      ws.columns = [
-        { header: 'Campo', key: 'campo', width: 30 },
-        { header: 'Valor', key: 'valor', width: 50 }
-      ];
-
-      // Estilo para encabezado de cada registro
-      const headerStyle = {
-        font: { bold: true, color: { argb: 'FFFFFFFF' } },
-        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } },
-        alignment: { horizontal: 'center' }
-      };
-
-      // Estilo para campos
-      const campoStyle = {
-        font: { bold: true },
-        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } }
-      };
-
-      let currentRow = 2; // Empezar después del header
-
-      rowsUnicos.forEach((r, index) => {
-        // Título del registro
-        ws.mergeCells(`A${currentRow}:B${currentRow}`);
-        const titleCell = ws.getCell(`A${currentRow}`);
-        titleCell.value = `REGISTRO ${index + 1} - ID: ${r.id}`;
-        titleCell.style = headerStyle;
-        currentRow++;
-
-        // Cada campo como fila
-        keys.forEach(k => {
-          let val = r[k];
-          
-          // Formatear valor
-          if (k === 'fecha_servicio') {
-            try {
-              if (val) {
-                const d = new Date(val);
-                val = !Number.isNaN(d.getTime()) ? d.toISOString().slice(0,10) : String(val);
-              } else {
-                val = '';
-              }
-            } catch (e) { val = val ? String(val) : ''; }
-          } else if (val === null || val === undefined) {
-            val = '';
-          } else if (val instanceof Date) {
-            try {
-              val = !Number.isNaN(val.getTime()) ? val.toISOString().slice(0,10) : '';
-            } catch (e) { val = ''; }
-          } else if (Buffer.isBuffer(val)) {
-            val = '[Buffer]';
-          } else if (typeof val === 'object') {
-            try { val = JSON.stringify(val); } catch (e) { val = String(val); }
-          }
-
-          const row = ws.getRow(currentRow);
-          row.getCell(1).value = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-          row.getCell(1).style = campoStyle;
-          row.getCell(2).value = val;
-          currentRow++;
+      if (rows.length === 1) {
+        console.log(`[DESCARGAR] Generando Excel para registro ID: ${rows[0].id}`);
+        const xlsxBuf = await generarExcelPorInventarioObra(rows[0]);
+        
+        console.log(`[DESCARGAR] Buffer generado, tamaño: ${xlsxBuf.length} bytes`);
+        
+        // NO usar res.setHeader después de comenzar a escribir
+        res.writeHead(200, {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Disposition': `attachment; filename="inventario_obra_${rows[0].id}.xlsx"`,
+          'Content-Length': xlsxBuf.length
         });
-
-        // Línea vacía entre registros
-        currentRow++;
+        
+        res.write(xlsxBuf);
+        res.end();
+        
+        console.log(`[DESCARGAR] Archivo enviado exitosamente`);
+        return;
+      }
+      
+      // Varios registros: ZIP con un Excel por registro
+      console.log(`[DESCARGAR] Generando ZIP con ${rows.length} archivos Excel`);
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': 'attachment; filename="inventarios_obra_excels.zip"'
       });
-
-      res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition','attachment; filename=inventarios_obra.xlsx');
-      await workbook.xlsx.write(res);
-      return res.end();
+      
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      archive.on('error', err => { 
+        console.error('Archiver error:', err); 
+        try{ 
+          if (!res.headersSent) res.status(500).end(); 
+        } catch(e){} 
+      });
+      archive.pipe(res);
+      
+      for (const r of rows) {
+        try {
+          const xlsxBuf = await generarExcelPorInventarioObra(r);
+          archive.append(xlsxBuf, { name: `inventario_obra_${r.id}.xlsx` });
+        } catch (err) {
+          console.error(`Error generando Excel para id=${r.id}:`, err);
+          archive.append(`Error generando Excel para id=${r.id}: ${err.message||err}`, { name: `inventario_obra_${r.id}_error.txt` });
+        }
+      }
+      
+      await archive.finalize();
+      console.log(`[DESCARGAR] ZIP generado y enviado exitosamente`);
+      return;
     }
 
     if (formato === 'pdf') {
-      if (!q.rows || q.rows.length === 0) return res.status(404).json({ success: false, error: 'No se encontraron registros' });
-      res.setHeader('Content-Type','application/zip');
-      res.setHeader('Content-Disposition','attachment; filename="inventarios_obra.zip"');
+      if (!rows.length) return res.status(404).json({ success: false, error: 'No se encontraron registros' });
+      
+      if (rows.length === 1) {
+        console.log(`[DESCARGAR] Generando PDF para registro ID: ${rows[0].id}`);
+        const pdfBuf = await generarPDFPorInventarioObra(rows[0]);
+        
+        console.log(`[DESCARGAR] PDF generado, tamaño: ${pdfBuf.length} bytes`);
+        
+        res.writeHead(200, {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="inventario_obra_${rows[0].id}.pdf"`,
+          'Content-Length': pdfBuf.length
+        });
+        
+        res.write(pdfBuf);
+        res.end();
+        
+        console.log(`[DESCARGAR] PDF enviado exitosamente`);
+        return;
+      }
+      
+      // Varios registros: ZIP con un PDF por registro
+      console.log(`[DESCARGAR] Generando ZIP con ${rows.length} archivos PDF`);
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': 'attachment; filename="inventarios_obra_pdfs.zip"'
+      });
+      
       const archive = archiver('zip', { zlib: { level: 9 } });
-      archive.on('error', err => { console.error('Archiver error:', err); try{ res.status(500).end(); } catch(e){} });
+      archive.on('error', err => { 
+        console.error('Archiver error:', err); 
+        try{ 
+          if (!res.headersSent) res.status(500).end(); 
+        } catch(e){} 
+      });
       archive.pipe(res);
-      for (const r of q.rows) {
+      
+      for (const r of rows) {
         try {
-          const pdfBuf = await new Promise((resolve, reject) => {
-            try {
-              const doc = new PDFDocument({ margin: 30, size: 'A4' });
-              const bufs = [];
-              doc.on('data', b => bufs.push(b));
-              doc.on('end', () => resolve(Buffer.concat(bufs)));
-
-              doc.fontSize(16).text(`Inventario Obra - ID: ${r.id}`, { align: 'center' });
-              doc.moveDown();
-              doc.fontSize(12).text(`Fecha: ${r.fecha_servicio ? (new Date(r.fecha_servicio)).toISOString().slice(0,10) : ''}`);
-              doc.text(`Cliente: ${r.nombre_cliente || ''}`);
-              doc.text(`Proyecto: ${r.nombre_proyecto || ''}`);
-              doc.text(`Operador: ${r.nombre_operador || ''}`);
-              doc.text(`Cargo: ${r.cargo || ''}`);
-              doc.moveDown();
-              // Incluir todos los campos, incluidas observaciones
-              Object.entries(r).forEach(([k, v]) => {
-                if (v !== undefined && v !== null && String(v).trim() !== '') {
-                  doc.fontSize(11).text(`${k.replace(/_/g,' ')}: ${v}`);
-                }
-              });
-              doc.end();
-            } catch (err) { reject(err); }
-          });
+          const pdfBuf = await generarPDFPorInventarioObra(r);
           archive.append(pdfBuf, { name: `inventario_obra_${r.id}.pdf` });
-        } catch (pdfErr) {
-          archive.append(`Error generando PDF para id=${r.id}: ${pdfErr.message||pdfErr}`, { name: `inventario_obra_${r.id}_error.txt` });
+        } catch (err) {
+          console.error(`Error generando PDF para id=${r.id}:`, err);
+          archive.append(`Error generando PDF para id=${r.id}: ${err.message||err}`, { name: `inventario_obra_${r.id}_error.txt` });
         }
       }
+      
       await archive.finalize();
+      console.log(`[DESCARGAR] ZIP de PDFs generado y enviado exitosamente`);
       return;
     }
 
     // fallback CSV
-    const keys = q.rows[0] ? Object.keys(q.rows[0]) : [];
+    const keys = rows[0] ? Object.keys(rows[0]) : [];
     const header = keys.length ? keys : ['id','fecha','operador','obra','cliente'];
     const lines = [header.join(',')];
-    for (const r of q.rows) {
+    for (const r of rows) {
       const rowArr = header.map(k => {
         let val = r[k];
         if (k === 'fecha_servicio') {
@@ -331,7 +344,9 @@ router.post('/descargar', async (req, res) => {
 
   } catch (err) {
     console.error('Error en /inventarios_obra_admin/descargar:', err);
-    res.status(500).json({ success:false, error: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ success:false, error: err.message });
+    }
   }
 });
 
