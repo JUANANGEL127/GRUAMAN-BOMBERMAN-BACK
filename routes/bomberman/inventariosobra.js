@@ -103,6 +103,9 @@ router.post("/", async (req, res) => {
     "valvula_guillotina_55_buena", "valvula_guillotina_55_mala",
     "extintor_buena", "extintor_mala",
     "botiquin_buena", "botiquin_mala",
+    // Nuevos campos solicitados: banco metálico y soportes metálicos
+    "banco_metalico_buena", "banco_metalico_mala",
+    "soportes_metalicos_buena", "soportes_metalicos_mala",
     
     // Observaciones
     "observaciones_generales"
