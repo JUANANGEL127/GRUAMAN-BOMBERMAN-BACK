@@ -114,8 +114,27 @@ router.post("/", async (req, res) => {
     "bomba_pc506_seriales",
     "bomba_pc607_seriales",
     "bomba_tb30_seriales",
-    "bomba_tb50_seriales"
+    "bomba_tb50_seriales",
+    // Nuevos campos de fecha enviados por el frontend
+    "botiquin_fecha_vencimiento",
+    "extintor_fecha_vencimiento"
   ];
+
+  // Normalizar fechas a YYYY-MM-DD (devuelve null si no es válida)
+  function normalizeDate(val) {
+    if (val === undefined || val === null || val === '') return null;
+    if (val instanceof Date && !Number.isNaN(val.getTime())) {
+      const d = val;
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+    const s = String(val).trim();
+    // Aceptar ya-formateado YYYY-MM-DD
+    const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return null;
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
 
   // Validar campos requeridos
   const faltantes = required.filter(k => body[k] === undefined || body[k] === null);
@@ -152,6 +171,8 @@ router.post("/", async (req, res) => {
       fields.push(f);
       if (f === 'empresa_id') {
         values.push(body[f] ? parseInt(body[f], 10) : null);
+      } else if (f.endsWith('_fecha_vencimiento') || f.includes('fecha')) {
+        values.push(normalizeDate(body[f]));
       } else {
         // Campos de seriales (texto)
         values.push(normalizeSeriales(body[f]));

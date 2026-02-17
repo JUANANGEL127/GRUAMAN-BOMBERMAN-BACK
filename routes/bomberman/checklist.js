@@ -134,6 +134,8 @@ router.post("/", async (req, res) => {
     const camposValidos = columnas.map(col => col.nombre);
     const optionFields = new Set(camposValidos.filter(
       k => k.endsWith("_observacion") === false &&
+        // Excluir campos numéricos de tipo *_galones para no normalizarlos a strings como "REGULAR"
+        !k.endsWith("_galones") &&
         k !== "id" && k !== "observaciones" &&
         k !== "nombre_cliente" && k !== "nombre_proyecto" &&
         k !== "fecha_servicio" && k !== "nombre_operador" &&
