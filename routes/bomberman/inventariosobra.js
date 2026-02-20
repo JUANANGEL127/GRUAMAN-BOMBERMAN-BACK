@@ -169,7 +169,40 @@ router.post("/", async (req, res) => {
   });
 
   // Agregar campos opcionales si están presentes
+  const serialFields = new Set([
+    'bomba_pc506_seriales',
+    'bomba_pc607_seriales',
+    'bomba_tb30_seriales',
+    'bomba_tb50_seriales'
+  ]);
+
+  const dateFields = new Set([
+    'botiquin_fecha_vencimiento',
+    'extintor_fecha_vencimiento'
+  ]);
+
   optional.forEach(f => {
+    // Para las fechas siempre incluir la columna
+    // y almacenar NULL si no llegó ningún valor útil.
+    if (dateFields.has(f)) {
+      fields.push(f);
+      values.push(normalizeDate(body[f]));
+      return;
+    }
+
+    // Para los seriales de bombas siempre incluir la columna
+    // y almacenar NULL si no llegó ningún valor útil.
+    if (serialFields.has(f)) {
+      fields.push(f);
+      const val = body[f];
+      if (val === undefined || val === null || String(val).trim() === '') {
+        values.push(null);
+      } else {
+        values.push(normalizeSeriales(val));
+      }
+      return;
+    }
+
     if (body[f] !== undefined) {
       fields.push(f);
       if (f === 'empresa_id') {
