@@ -173,15 +173,15 @@ router.post('/buscar', async (req, res) => {
 
         const colName = nombreProyectoCol[tabla];
         if (colName) {
-          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, ${colName} AS nombre_proyecto, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date), ${colName}`);
+          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, ${colName} AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date), ${colName}, '${tabla}'`);
         } else {
-          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, NULL::text AS nombre_proyecto, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date)`);
+          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, NULL::text AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date), '${tabla}'`);
         }
       }
 
       if (!unionParts.length) continue;
 
-      const finalQuery = `SELECT nombre, fecha, COALESCE((ARRAY_AGG(nombre_proyecto ORDER BY pr) FILTER (WHERE nombre_proyecto IS NOT NULL))[1],'') AS nombre_proyecto, COUNT(*) AS total_registros FROM ( ${unionParts.join(' UNION ALL ')} ) t GROUP BY nombre, fecha ORDER BY nombre, fecha`;
+      const finalQuery = `SELECT nombre, fecha, COALESCE((ARRAY_AGG(nombre_proyecto ORDER BY pr) FILTER (WHERE nombre_proyecto IS NOT NULL))[1],'') AS nombre_proyecto, ARRAY_AGG(DISTINCT formato) AS formatos_llenos, COUNT(*) AS total_registros FROM ( ${unionParts.join(' UNION ALL ')} ) t GROUP BY nombre, fecha ORDER BY nombre, fecha`;
 
       // Ejecutar la consulta una sola vez por empresa
       let aggregated = [];
@@ -203,15 +203,18 @@ router.post('/buscar', async (req, res) => {
       for (const r of aggregated) {
         const fechaKey = formatDateOnly(r.fecha);
         const key = `${String(r.nombre).toLowerCase()}_${fechaKey}`;
-        map.set(key, { total_registros: parseInt(r.total_registros || 0), nombre_proyecto: r.nombre_proyecto || '' });
+        map.set(key, { total_registros: parseInt(r.total_registros || 0), nombre_proyecto: r.nombre_proyecto || '', formatos_llenos: r.formatos_llenos || [] });
       }
 
       // Rellenar fechas (paginated)
+      const expectedFormatos = registrosAsignados.map(r => r.tabla);
       for (const nombreTrabajador of trabajadoresDeEmpresa) {
         for (const fecha of fechasPaginadas) {
           const key = `${String(nombreTrabajador).trim().toLowerCase()}_${fecha}`;
-          const entry = map.get(key) || { total_registros: 0, nombre_proyecto: '' };
-          resultadosPorFecha.push({ fecha, nombre: nombreTrabajador, empresa: empresasMap[empresa_id_val] || empresa_id_val, nombre_proyecto: entry.nombre_proyecto, total_registros: entry.total_registros });
+          const entry = map.get(key) || { total_registros: 0, nombre_proyecto: '', formatos_llenos: [] };
+          const filled = (entry.formatos_llenos || []).map(String);
+          const faltantes = expectedFormatos.filter(e => !filled.includes(e));
+          resultadosPorFecha.push({ fecha, nombre: nombreTrabajador, empresa: empresasMap[empresa_id_val] || empresa_id_val, nombre_proyecto: entry.nombre_proyecto, total_registros: entry.total_registros, formatos_llenos: filled, formatos_faltantes: faltantes });
         }
       }
     }
@@ -318,15 +321,15 @@ router.post('/descargar', async (req, res) => {
 
         const colName = nombreProyectoCol[tabla];
         if (colName) {
-          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, ${colName} AS nombre_proyecto, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date), ${colName}`);
+          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, ${colName} AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date), ${colName}, '${tabla}'`);
         } else {
-          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, NULL::text AS nombre_proyecto, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date)`);
+          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, NULL::text AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date), '${tabla}'`);
         }
       }
 
       if (!unionParts.length) continue;
 
-      const finalQuery = `SELECT nombre, fecha, COALESCE((ARRAY_AGG(nombre_proyecto ORDER BY pr) FILTER (WHERE nombre_proyecto IS NOT NULL))[1],'') AS nombre_proyecto, COUNT(*) AS total_registros FROM ( ${unionParts.join(' UNION ALL ')} ) t GROUP BY nombre, fecha ORDER BY nombre, fecha`;
+      const finalQuery = `SELECT nombre, fecha, COALESCE((ARRAY_AGG(nombre_proyecto ORDER BY pr) FILTER (WHERE nombre_proyecto IS NOT NULL))[1],'') AS nombre_proyecto, ARRAY_AGG(DISTINCT formato) AS formatos_llenos, COUNT(*) AS total_registros FROM ( ${unionParts.join(' UNION ALL ')} ) t GROUP BY nombre, fecha ORDER BY nombre, fecha`;
 
       let aggregated = [];
       try {
@@ -346,14 +349,17 @@ router.post('/descargar', async (req, res) => {
       for (const r of aggregated) {
         const fechaKey = formatDateOnly(r.fecha);
         const key = `${String(r.nombre).toLowerCase()}_${fechaKey}`;
-        map.set(key, { total_registros: parseInt(r.total_registros || 0), nombre_proyecto: r.nombre_proyecto || '' });
+        map.set(key, { total_registros: parseInt(r.total_registros || 0), nombre_proyecto: r.nombre_proyecto || '', formatos_llenos: r.formatos_llenos || [] });
       }
 
+      const expectedFormatos = registrosAsignados.map(r => r.tabla);
       for (const nombreTrabajador of trabajadoresDeEmpresa) {
         for (const fecha of fechasLimitadas) {
           const key = `${String(nombreTrabajador).trim().toLowerCase()}_${fecha}`;
-          const entry = map.get(key) || { total_registros: 0, nombre_proyecto: '' };
-          resultadosPorFecha.push({ fecha, nombre: nombreTrabajador, empresa: empresasMap[empresa_id_val] || empresa_id_val, nombre_proyecto: entry.nombre_proyecto, total_registros: entry.total_registros });
+          const entry = map.get(key) || { total_registros: 0, nombre_proyecto: '', formatos_llenos: [] };
+          const filled = (entry.formatos_llenos || []).map(String);
+          const faltantes = expectedFormatos.filter(e => !filled.includes(e));
+          resultadosPorFecha.push({ fecha, nombre: nombreTrabajador, empresa: empresasMap[empresa_id_val] || empresa_id_val, nombre_proyecto: entry.nombre_proyecto, total_registros: entry.total_registros, formatos_llenos: filled, formatos_faltantes: faltantes });
         }
       }
     }
@@ -371,7 +377,9 @@ router.post('/descargar', async (req, res) => {
       { header: 'Nombre Usuario', key: 'nombre', width: 30 },
       { header: 'Empresa', key: 'empresa', width: 30 },
       { header: 'Nombre Proyecto', key: 'nombre_proyecto', width: 30 },
-      { header: 'Total Registros', key: 'total_registros', width: 16 }
+      { header: 'Total Registros', key: 'total_registros', width: 16 },
+      { header: 'Formatos Llenos', key: 'formatos_llenos', width: 40 },
+      { header: 'Formatos Faltantes', key: 'formatos_faltantes', width: 40 }
     ];
 
     // Estilo del encabezado
@@ -384,7 +392,15 @@ router.post('/descargar', async (req, res) => {
     // Escribir filas en streaming
     let written = 0;
     for (const row of resultadosPorFecha) {
-      const r = worksheet.addRow({ fecha: row.fecha, nombre: row.nombre, empresa: row.empresa || '', nombre_proyecto: row.nombre_proyecto || '', total_registros: row.total_registros });
+      const r = worksheet.addRow({
+        fecha: row.fecha,
+        nombre: row.nombre,
+        empresa: row.empresa || '',
+        nombre_proyecto: row.nombre_proyecto || '',
+        total_registros: row.total_registros,
+        formatos_llenos: (row.formatos_llenos || []).join(', '),
+        formatos_faltantes: (row.formatos_faltantes || []).join(', ')
+      });
       r.commit();
       written++;
     }
