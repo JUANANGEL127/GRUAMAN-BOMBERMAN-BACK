@@ -5,24 +5,11 @@ import fs from 'fs';
 import path from 'path';
 import libre from 'libreoffice-convert';
 import dotenv from 'dotenv';
+import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
 dotenv.config();
 const router = express.Router();
 
-// Helper: formatea string "YYYY-MM-DD" de forma segura (evita shift TZ)
-function formatDateOnly(input) {
-  if (!input) return null;
-  if (input instanceof Date && !Number.isNaN(input.getTime())) {
-    const d = input;
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-  const s = String(input).trim();
-  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-function todayDateString() { return formatDateOnly(new Date()); }
+// usar helpers compartidos para manejo de fechas (evita shift TZ)
 
 // Helper para construir WHERE dinámico (usa CAST(...) AS date para fecha)
 function buildWhere(params, allowedFields) {
@@ -132,7 +119,7 @@ router.post('/buscar', async (req, res) => {
       .map(filtraChecklist)
       .filter(r => r !== null)
       .map(r => ({
-        fecha: r.fecha_servicio ? (new Date(r.fecha_servicio)).toISOString().slice(0,10) : null,
+        fecha: formatDateOnly(r.fecha_servicio),
         nombre: r.nombre_operador || '',
         cedula: r.numero_identificacion || null,
         empresa: r.bomba_numero || '',
@@ -165,7 +152,7 @@ async function generarPDFPorChecklist(r) {
     const data = {};
     Object.keys(r).forEach(k => {
       let v = r[k];
-      if (k === 'fecha_servicio') v = v ? (new Date(v)).toISOString().slice(0,10) : '';
+      if (k === 'fecha_servicio') v = v ? formatDateOnly(v) : '';
       else if (v === null || v === undefined) v = '';
       else if (typeof v === 'object') { try { v = JSON.stringify(v); } catch(e){ v = String(v); } }
       data[k] = String(v);
@@ -290,7 +277,7 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
         keys.forEach(k => {
           let val = r[k];
           if (k === 'fecha_servicio') {
-            val = val ? (new Date(val)).toISOString().slice(0,10) : '';
+            val = val ? formatDateOnly(val) : '';
           } else if (val === null || val === undefined) {
             val = '';
           } else if (typeof val === 'object') {
@@ -338,7 +325,7 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
       const rowArr = header.map(k => {
         let val = r[k];
         if (k === 'fecha_servicio') {
-          val = val ? (new Date(val)).toISOString().slice(0,10) : '';
+          val = val ? formatDateOnly(val) : '';
         } else if (val === null || val === undefined) {
           val = '';
         } else if (typeof val === 'object') {

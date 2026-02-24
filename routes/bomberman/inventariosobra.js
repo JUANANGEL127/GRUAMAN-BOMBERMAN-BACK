@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { enviarDocumentoAFirmar } from '../signio.js';
 import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
+import { formatDateOnly } from '../../helpers/dateUtils.js';
 const router = Router();
 
 // Middleware: verifica disponibilidad de la DB
@@ -125,18 +126,7 @@ router.post("/", async (req, res) => {
 
   // Normalizar fechas a YYYY-MM-DD (devuelve null si no es válida)
   function normalizeDate(val) {
-    if (val === undefined || val === null || val === '') return null;
-    if (val instanceof Date && !Number.isNaN(val.getTime())) {
-      const d = val;
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    }
-    const s = String(val).trim();
-    // Aceptar ya-formateado YYYY-MM-DD
-    const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-    if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-    const d = new Date(s);
-    if (Number.isNaN(d.getTime())) return null;
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    return formatDateOnly(val);
   }
 
   // Validar campos requeridos

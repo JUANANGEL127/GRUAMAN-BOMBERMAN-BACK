@@ -5,24 +5,11 @@ import fs from 'fs';
 import path from 'path';
 import libre from 'libreoffice-convert';
 import dotenv from 'dotenv';
+import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
 dotenv.config();
 const router = express.Router();
 
-// Helper: formatea string "YYYY-MM-DD" de forma segura (evita shift TZ)
-function formatDateOnly(input) {
-  if (!input) return null;
-  if (input instanceof Date && !Number.isNaN(input.getTime())) {
-    const d = input;
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-  const s = String(input).trim();
-  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-function todayDateString() { return formatDateOnly(new Date()); }
+// usar helpers compartidos para manejo de fechas (evita shift TZ)
 
 // Helper para construir WHERE dinámico (usa CAST(...) AS date para fecha)
 function buildWhere(params, allowedFields) {
@@ -95,7 +82,7 @@ router.post('/buscar', async (req, res) => {
     );
 
     const rows = q.rows.map(r => ({
-      fecha: r.fecha_servicio ? (new Date(r.fecha_servicio)).toISOString().slice(0,10) : null,
+      fecha: formatDateOnly(r.fecha_servicio),
       nombre: r.nombre_operador || '',
       cedula: r.numero_identificacion || null,
       empresa: r.nombre_responsable || '',
@@ -127,8 +114,8 @@ async function generarExcelPorInventarioObra(r) {
 
   const data = {};
   Object.keys(r).forEach(k => {
-    let v = r[k];
-    if (k === 'fecha_servicio') v = v ? (new Date(v)).toISOString().slice(0,10) : '';
+  let v = r[k];
+  if (k === 'fecha_servicio') v = v ? formatDateOnly(v) : '';
     else if (v === null || v === undefined) v = '';
     else if (typeof v === 'object') { try { v = JSON.stringify(v); } catch(e){ v = String(v); } }
     data[k] = String(v);
@@ -315,18 +302,13 @@ router.post('/descargar', async (req, res) => {
         let val = r[k];
         if (k === 'fecha_servicio') {
           try {
-            if (val) {
-              const d = new Date(val);
-              val = !Number.isNaN(d.getTime()) ? d.toISOString().slice(0,10) : String(val);
-            } else {
-              val = '';
-            }
+            val = val ? formatDateOnly(val) : '';
           } catch (e) { val = val ? String(val) : ''; }
         } else if (val === null || val === undefined) {
           val = '';
         } else if (val instanceof Date) {
           try {
-            val = !Number.isNaN(val.getTime()) ? val.toISOString().slice(0,10) : '';
+            val = formatDateOnly(val) || '';
           } catch (e) { val = ''; }
         } else if (Buffer.isBuffer(val)) {
           val = '[Buffer]';

@@ -2,23 +2,8 @@ import express from 'express';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
+import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
 const router = express.Router();
-
-// Helper: formatea string "YYYY-MM-DD" de forma segura (evita shift TZ)
-function formatDateOnly(input) {
-  if (!input) return null;
-  if (input instanceof Date && !Number.isNaN(input.getTime())) {
-    const d = input;
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-  const s = String(input).trim();
-  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-function todayDateString() { return formatDateOnly(new Date()); }
 
 // Helper para construir WHERE dinámico (usa CAST(...) AS date para fecha)
 function buildWhere(params, allowedFields) {
@@ -91,7 +76,7 @@ router.post('/buscar', async (req, res) => {
     );
 
     const rows = q.rows.map(r => ({
-      fecha: r.fecha_servicio ? (new Date(r.fecha_servicio)).toISOString().slice(0,10) : null,
+      fecha: formatDateOnly(r.fecha_servicio),
       nombre: r.nombre_operador || '',
       cedula: r.numero_identificacion || null,
       empresa: r.nombre_responsable || '',
@@ -118,7 +103,7 @@ async function generarPDFPorInspeccion(r) {
 
       doc.fontSize(16).text(`Inspección EPCC - ID: ${r.id}`, { align: 'center' });
       doc.moveDown();
-      doc.fontSize(12).text(`Fecha: ${r.fecha_servicio ? (new Date(r.fecha_servicio)).toISOString().slice(0,10) : ''}`);
+      doc.fontSize(12).text(`Fecha: ${r.fecha_servicio ? formatDateOnly(r.fecha_servicio) : ''}`);
       doc.text(`Cliente: ${r.nombre_cliente || ''}`);
       doc.text(`Proyecto: ${r.nombre_proyecto || ''}`);
       doc.text(`Operador: ${r.nombre_operador || ''}`);
@@ -185,7 +170,7 @@ router.post('/descargar', async (req, res) => {
         keys.forEach(k => {
           let val = r[k];
           if (k === 'fecha_servicio') {
-            val = val ? (new Date(val)).toISOString().slice(0,10) : '';
+            val = val ? formatDateOnly(val) : '';
           } else if (val === null || val === undefined) {
             val = '';
           } else if (typeof val === 'object') {
@@ -231,7 +216,7 @@ router.post('/descargar', async (req, res) => {
     const header = ['id','fecha','operador','obra','cliente'];
     const lines = [header.join(',')];
     for (const r of q.rows) {
-      const fecha = r.fecha_servicio ? (new Date(r.fecha_servicio)).toISOString().slice(0,10) : '';
+      const fecha = r.fecha_servicio ? formatDateOnly(r.fecha_servicio) : '';
       const nombreOp = (r.nombre_operador||'').replace(/"/g,'""');
       const obraVal = (r.nombre_proyecto||'').replace(/"/g,'""');
       const cliente = (r.nombre_cliente||'').replace(/"/g,'""');

@@ -2,6 +2,7 @@ import express from 'express';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
+import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
 const router = express.Router();
 
 // Helper: construye WHERE dinámico y values parametrizados
@@ -31,37 +32,7 @@ function buildWhere(params, allowedFields) {
   return { where: clauses.length ? 'WHERE ' + clauses.join(' AND ') : '', values };
 }
 
-// Helper: normaliza una entrada de fecha a YYYY-MM-DD (fecha local)
-// Acepta string "YYYY-MM-DD" o Date, evita new Date("YYYY-MM-DD") que causa shifts por TZ
-function formatDateOnly(input) {
-  if (!input) return null;
-  // Si ya es Date, formatear por partes
-  if (input instanceof Date && !Number.isNaN(input.getTime())) {
-    const d = input;
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
-  const s = String(input).trim();
-  // Si viene en formato YYYY-MM-DD, usarlo directamente con padding seguro
-  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) {
-    const y = m[1];
-    const mo = String(m[2]).padStart(2, '0');
-    const da = String(m[3]).padStart(2, '0');
-    return `${y}-${mo}-${da}`;
-  }
-  // Fallback: intentar parsear y devolver fecha local (solo por compatibilidad)
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-// Helper: devuelve la fecha de hoy en YYYY-MM-DD
-function todayDateString() {
-  return formatDateOnly(new Date());
-}
+// usar helpers compartidos para manejo de fechas (evita shift TZ)
 
 // GET /permiso_trabajo -> lista paginada
 router.get('/permiso_trabajo', async (req, res) => {
@@ -192,7 +163,7 @@ router.post('/buscar', async (req, res) => {
 
     // Transformar filas al formato esperado por el front
     const rows = q.rows.map(r => ({
-      fecha: r.fecha_servicio ? r.fecha_servicio.toISOString().slice(0,10) : null,
+      fecha: formatDateOnly(r.fecha_servicio),
       nombre: r.nombre_operador || '',
       cedula: null, // no disponible en permiso_trabajo
       empresa: r.nombre_responsable || '',
@@ -219,7 +190,7 @@ async function generarPDFPermisos(rows) {
       doc.fontSize(18).text('Permisos de Trabajo', { align: 'center' });
       doc.moveDown();
       rows.forEach((r, i) => {
-        doc.fontSize(12).text(`${i + 1}. ID: ${r.id}  Fecha: ${r.fecha_servicio ? r.fecha_servicio.toISOString().slice(0,10) : ''}`);
+        doc.fontSize(12).text(`${i + 1}. ID: ${r.id}  Fecha: ${formatDateOnly(r.fecha_servicio) || ''}`);
         doc.text(`   Cliente/Constructora: ${r.nombre_cliente || ''}`);
         doc.text(`   Proyecto/Obra: ${r.nombre_proyecto || ''}`);
         doc.text(`   Operador: ${r.nombre_operador || ''}   Cargo: ${r.cargo || ''}`);
@@ -244,7 +215,7 @@ async function generarPDFPorPermiso(r) {
       doc.on('end', () => resolve(Buffer.concat(bufs)));
       doc.fontSize(16).text(`Permiso de Trabajo - ID: ${r.id}`, { align: 'center' });
       doc.moveDown();
-      doc.fontSize(12).text(`Fecha: ${r.fecha_servicio ? (new Date(r.fecha_servicio)).toISOString().slice(0,10) : ''}`);
+      doc.fontSize(12).text(`Fecha: ${r.fecha_servicio ? formatDateOnly(r.fecha_servicio) : ''}`);
       doc.text(`Cliente / Constructora: ${r.nombre_cliente || ''}`);
       doc.text(`Proyecto / Obra: ${r.nombre_proyecto || ''}`);
       doc.text(`Operador: ${r.nombre_operador || ''}`);
@@ -338,7 +309,7 @@ router.post('/descargar', async (req, res) => {
         const rowObj = {};
         keys.forEach(k => {
           if (k === 'fecha_servicio') {
-            rowObj[k] = r[k] ? (new Date(r[k])).toISOString().slice(0,10) : '';
+            rowObj[k] = r[k] ? formatDateOnly(r[k]) : '';
           } else {
             rowObj[k] = r[k] !== undefined && r[k] !== null ? r[k] : '';
           }
@@ -398,7 +369,7 @@ router.post('/descargar', async (req, res) => {
     const header = ['id','fecha','nombre','cedula','empresa','obra','constructora'];
     const lines = [header.join(',')];
     for (const r of q.rows) {
-      const fecha = r.fecha_servicio ? r.fecha_servicio.toISOString().slice(0,10) : '';
+      const fecha = r.fecha_servicio ? formatDateOnly(r.fecha_servicio) : '';
       const nombreOp = (r.nombre_operador || '').replace(/"/g, '""');
       const ced = ''; // no disponible en permiso_trabajo
       const empresa = (r.nombre_responsable || '').replace(/"/g, '""');

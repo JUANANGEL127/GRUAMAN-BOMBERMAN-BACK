@@ -3,23 +3,8 @@ import { DateTime } from "luxon";
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
 import archiver from "archiver";
+import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
 const router = express.Router();
-
-// Helper: formatea string "YYYY-MM-DD" de forma segura (evita shift TZ)
-function formatDateOnly(input) {
-  if (!input) return null;
-  if (input instanceof Date && !Number.isNaN(input.getTime())) {
-    const d = input;
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-  const s = String(input).trim();
-  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-function todayDateString() { return formatDateOnly(new Date()); }
 
 // Helper para construir WHERE dinámico (usa CAST(...) AS date para fecha)
 function buildWhere(params, allowedFields = []) {
@@ -141,7 +126,7 @@ async function generarPDFPorRegistro(r) {
 
       doc.fontSize(16).text(`Horas Jornada - ${r.nombre_operador || ''}`, { align: 'center' });
       doc.moveDown();
-      doc.fontSize(12).text(`Fecha: ${r.fecha_servicio ? (new Date(r.fecha_servicio)).toISOString().slice(0,10) : ''}`);
+      doc.fontSize(12).text(`Fecha: ${r.fecha_servicio ? formatDateOnly(r.fecha_servicio) : ''}`);
       doc.text(`Cliente: ${r.nombre_cliente || ''}`);
       doc.text(`Proyecto: ${r.nombre_proyecto || ''}`);
       doc.text(`Operador: ${r.nombre_operador || ''}`);
@@ -366,7 +351,7 @@ async function handleBuscar(req, res) {
     );
 
     const rows = q.rows.map(r => {
-      const fecha = r.fecha_servicio && r.fecha_servicio.toISOString ? r.fecha_servicio.toISOString().slice(0,10) : formatDateOnly(r.fecha_servicio);
+      const fecha = formatDateOnly(r.fecha_servicio);
       const calculos = (r.hora_ingreso && r.hora_salida && (r.minutos_almuerzo !== undefined))
         ? calcularHoras({ hora_ingreso: r.hora_ingreso, hora_salida: r.hora_salida, minutos_almuerzo: r.minutos_almuerzo, fecha })
         : { horas_trabajadas: 0, extra_diurna: 0, extra_nocturna: 0, extra_festiva: 0, total_extras:0, festivo:false, dia_semana: null };
@@ -424,7 +409,7 @@ async function handleResumen(req, res) {
 
     // Procesar TODOS los registros para el resumen (sin paginación)
     for (const r of qAll.rows) {
-      const fecha = r.fecha_servicio && r.fecha_servicio.toISOString ? r.fecha_servicio.toISOString().slice(0,10) : formatDateOnly(r.fecha_servicio);
+      const fecha = formatDateOnly(r.fecha_servicio);
       
       // Calcular horas si tiene los datos completos, sino usar valores por defecto
       const tieneHorasCompletas = r.hora_ingreso && r.hora_salida;
@@ -479,7 +464,7 @@ async function handleResumen(req, res) {
 
     // Procesar solo los registros paginados para la lista de resultados
     for (const r of q.rows) {
-      const fecha = r.fecha_servicio && r.fecha_servicio.toISOString ? r.fecha_servicio.toISOString().slice(0,10) : formatDateOnly(r.fecha_servicio);
+      const fecha = formatDateOnly(r.fecha_servicio);
       const tieneHorasCompletas = r.hora_ingreso && r.hora_salida;
       const calculos = tieneHorasCompletas
         ? calcularHoras({ hora_ingreso: r.hora_ingreso, hora_salida: r.hora_salida, minutos_almuerzo: r.minutos_almuerzo || 0, fecha })
@@ -572,7 +557,7 @@ async function handleDescargar(req, res) {
     for (const r of q.rows) {
       if (r.id != null && idsVistos.has(r.id)) continue;
       if (r.id != null) idsVistos.add(r.id);
-      const fecha = r.fecha_servicio && r.fecha_servicio.toISOString ? r.fecha_servicio.toISOString().slice(0,10) : formatDateOnly(r.fecha_servicio);
+      const fecha = formatDateOnly(r.fecha_servicio);
       const calculos = (r.hora_ingreso && r.hora_salida && (r.minutos_almuerzo !== undefined))
         ? calcularHoras({ hora_ingreso: r.hora_ingreso, hora_salida: r.hora_salida, minutos_almuerzo: r.minutos_almuerzo, fecha })
         : { horas_trabajadas: 0, extra_diurna: 0, extra_nocturna: 0, extra_festiva: 0, total_extras:0, festivo:false, dia_semana:null };

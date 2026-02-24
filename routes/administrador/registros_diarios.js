@@ -1,5 +1,6 @@
 import { Router } from "express";
 import ExcelJS from 'exceljs';
+import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
 const router = Router();
 
 // Middleware para verificar si la base de datos está disponible
@@ -11,24 +12,7 @@ router.use((req, res, next) => {
   next();
 });
 
-// Helper para formatear fecha YYYY-MM-DD
-function formatDateOnly(input) {
-  if (!input) return null;
-  if (input instanceof Date && !Number.isNaN(input.getTime())) {
-    const d = input;
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-  const s = String(input).trim();
-  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-
-function todayDateString() { 
-  return formatDateOnly(new Date()); 
-}
+// usar helpers compartidos para manejo de fechas (evita shift TZ)
 
 // Helper: devuelve un map { [empresa_id]: nombre }
 async function getEmpresasMap(db, ids) {
@@ -121,8 +105,8 @@ router.post('/buscar', async (req, res) => {
 
     // Generar array de fechas en el rango
     const fechas = [];
-    const inicio = new Date(startDate);
-    const fin = new Date(endDate);
+    const inicio = parseDateLocal(startDate);
+    const fin = parseDateLocal(endDate);
     
     for (let d = new Date(inicio); d <= fin; d.setDate(d.getDate() + 1)) {
       fechas.push(formatDateOnly(new Date(d)));
@@ -274,8 +258,8 @@ router.post('/descargar', async (req, res) => {
 
     // Generar array de fechas en el rango
     const fechas = [];
-    const inicio = new Date(startDate);
-    const fin = new Date(endDate);
+    const inicio = parseDateLocal(startDate);
+    const fin = parseDateLocal(endDate);
     
     for (let d = new Date(inicio); d <= fin; d.setDate(d.getDate() + 1)) {
       fechas.push(formatDateOnly(new Date(d)));

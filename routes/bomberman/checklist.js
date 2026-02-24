@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { enviarDocumentoAFirmar, POSICIONES_FIRMA } from '../signio.js';
 import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
+import { formatDateOnly } from '../../helpers/dateUtils.js';
 const router = Router();
 
 // Middleware para verificar si la base de datos está disponible
@@ -242,7 +243,7 @@ router.post("/", async (req, res) => {
           nombre_documento: `Checklist de Bomba - ${data.nombre_cliente || 'Cliente'}`,
           external_id: `checklist_${checklistId}`,
           pdf: pdfBuf,
-          nombre_archivo: `Checklist_${checklistId || 'sin_id'}_${new Date().toISOString().split('T')[0]}.pdf`,
+          nombre_archivo: `Checklist_${checklistId || 'sin_id'}_${formatDateOnly(new Date())}.pdf`,
           firmante_principal: {
             nombre: firmante_principal.nombre,
             tipo_identificacion: 'CC',
