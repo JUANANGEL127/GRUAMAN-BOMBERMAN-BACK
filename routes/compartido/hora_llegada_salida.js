@@ -101,19 +101,34 @@ cron.schedule('0 0 * * *', async () => {
   }, delayMs);
 })();
 
-// Normaliza la fecha de entrada a YYYY-MM-DD en zona America/Bogota
+// Normaliza la fecha de entrada a YYYY-MM-DD sin alterar el día
 function normalizeFechaToBogota(fechaInput) {
   if (!fechaInput) return null;
   try {
-    // DateTime.fromISO entiende timestamps con Z y también fechas simples YYYY-MM-DD
-    const dt = DateTime.fromISO(String(fechaInput));
-    if (!dt.isValid) {
-      // intento parsear como Date nativo
-      const d = new Date(fechaInput);
-      if (isNaN(d.getTime())) return null;
-      return DateTime.fromJSDate(d).setZone("America/Bogota").toISODate();
+    // Si viene como string simple "YYYY-MM-DD", usarla directamente
+    const soloFecha = String(fechaInput).split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(soloFecha)) {
+      return soloFecha;
     }
-    return dt.setZone("America/Bogota").toISODate(); // 'YYYY-MM-DD'
+    
+    // Si viene como timestamp completo, parsearlo y extraer la fecha
+    const dt = DateTime.fromISO(String(fechaInput));
+    if (dt.isValid) {
+      // Usar toISODate() directo sin setZone para mantener la fecha original
+      return dt.toISODate();
+    }
+    
+    // Fallback: intentar con Date nativo
+    const d = new Date(fechaInput);
+    if (!isNaN(d.getTime())) {
+      // Extraer año, mes, día en UTC para evitar desfases de zona horaria
+      const year = d.getUTCFullYear();
+      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+    
+    return null;
   } catch (e) {
     return null;
   }
