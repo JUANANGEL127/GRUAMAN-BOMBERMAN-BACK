@@ -65,16 +65,19 @@ async function completarSalidasParaFecha(fecha) {
 
 // 12:00am (medianoche) - Completar horas de salida faltantes del día anterior
 // Para cada operador: completa el PRIMER registro sin salida del día con hora_ingreso + 7h20min
-cron.schedule('0 0 * * *', async () => {
+// Corre a las 5:00 AM UTC = 12:00 AM Colombia (UTC-5)
+cron.schedule('0 5 * * *', async () => {
   try {
-    const ayer = DateTime.now().setZone(CRON_TIMEZONE).minus({ days: 1 }).toISODate();
+    const ahora = DateTime.now().setZone(CRON_TIMEZONE);
+    console.log(`[CRON] Ejecutando a las ${ahora.toFormat('yyyy-MM-dd HH:mm:ss')} (hora Bogotá)`);
+    const ayer = ahora.minus({ days: 1 }).toISODate();
     const { fecha, actualizados } = await completarSalidasParaFecha(ayer);
     console.log(`[CRON 00:00] Completadas ${actualizados.length} salidas para ${fecha}`);
     actualizados.forEach(a => console.log(`  - ${a.nombre_operador} (id: ${a.id}): ${a.hora_ingreso} -> ${a.hora_salida}`));
   } catch (err) {
     console.error("[CRON 00:00] Error en cron de completar salidas:", err.message);
   }
-}, { timezone: CRON_TIMEZONE });
+});
 
 // Al iniciar (o al despertar del servidor): completar salidas pendientes de ayer y anteayer.
 // Si el servidor estuvo dormido a medianoche, el cron no corrió; al despertar esto lo corrige.
