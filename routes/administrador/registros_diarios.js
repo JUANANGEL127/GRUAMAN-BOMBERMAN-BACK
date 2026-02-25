@@ -157,9 +157,9 @@ router.post('/buscar', async (req, res) => {
 
         const colName = nombreProyectoCol[tabla];
         if (colName) {
-          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, ${colName} AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date), ${colName}, '${tabla}'`);
+          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, ${colName} AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[])`);
         } else {
-          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, NULL::text AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date), '${tabla}'`);
+          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, NULL::text AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[])`);
         }
       }
 
@@ -305,9 +305,9 @@ router.post('/descargar', async (req, res) => {
 
         const colName = nombreProyectoCol[tabla];
         if (colName) {
-          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, ${colName} AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date), ${colName}, '${tabla}'`);
+          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, ${colName} AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[])`);
         } else {
-          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, NULL::text AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[]) GROUP BY LOWER(TRIM(${campoNombre})), CAST(${campoFecha} AS date), '${tabla}'`);
+          unionParts.push(`SELECT LOWER(TRIM(${campoNombre})) AS nombre, CAST(${campoFecha} AS date) AS fecha, NULL::text AS nombre_proyecto, '${tabla}' AS formato, ${pr++} AS pr FROM ${tabla} WHERE CAST(${campoFecha} AS date) BETWEEN $1 AND $2 AND LOWER(TRIM(${campoNombre})) = ANY($3::text[])`);
         }
       }
 
