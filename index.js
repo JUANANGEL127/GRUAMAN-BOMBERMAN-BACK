@@ -739,8 +739,7 @@ app.listen(PORT, () =>
 // Devuelve los datos básicos de todos los trabajadores
 app.get("/datos_basicos", async (req, res) => {
   try {
-    // Incluye el campo "activo" en la consulta
-    const result = await pool.query(`SELECT nombre, empresa_id, numero_identificacion, activo FROM trabajadores`);
+    const result = await pool.query(`SELECT nombre, empresa_id, numero_identificacion, activo, cargo FROM trabajadores`);
     res.json({ datos: result.rows });
   } catch (error) {
     res.status(500).json({ error: "Error al obtener los datos básicos de trabajadores" });

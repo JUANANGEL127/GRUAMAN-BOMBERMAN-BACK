@@ -33,7 +33,7 @@ router.post("/", async (req, res) => {
   }
   let data = req.body;
 
-  // Campos requeridos según la nueva estructura
+  // Campos requeridos según la estructura de la tabla checklist (columnas NOT NULL)
   const camposRequeridos = [
     "nombre_cliente",
     "nombre_proyecto",
@@ -42,27 +42,20 @@ router.post("/", async (req, res) => {
     "bomba_numero",
     "horometro_motor",
     "chasis_aceite_motor",
-    "chasis_funcionamiento_combustible",
+    "chasis_nivel_combustible",
     "chasis_nivel_refrigerante",
-    "chasis_nivel_aceite_hidraulicos",
     "chasis_presion_llantas",
     "chasis_fugas",
     "chasis_soldadura",
     "chasis_integridad_cubierta",
     "chasis_herramientas_productos_diversos",
     "chasis_sistema_alberca",
-    "chasis_filtro_hidraulico",
-    "chasis_filtro_agua_limpio",
     "chasis_nivel_agua",
     "anillos",
-    "anillos_desgaste",
     "placa_gafa",
     "cilindros_atornillados",
-    "paso_masilla",
-    "paso_agua",
     "partes_faltantes",
     "mecanismo_s",
-    "funcion_sensor",
     "estado_oring",
     "funcion_vibrador",
     "paletas_eje_agitador",
@@ -73,12 +66,10 @@ router.post("/", async (req, res) => {
     "hidraulico_indicador_nivel_aceite",
     "hidraulico_enfriador_termotasto",
     "hidraulico_indicador_filtro",
-    "hidraulico_limalla",
     "hidraulico_mangueras_tubos_sin_fugas",
     "superficie_nivel_deposito_grasa",
     "superficie_puntos_lubricacion",
     "superficie_empaquetaduras_conexion",
-    "superficie_fugas",
     "mangueras_interna_no_deshilachadas",
     "mangueras_acoples_buen_estado",
     "mangueras_externa_no_deshilachado",
@@ -95,26 +86,7 @@ router.post("/", async (req, res) => {
     "tuberia_abrazaderas_descarga_ajustadas",
     "tuberia_espesor",
     "tuberia_vertical_tallo_recta",
-    "tuberia_desplazamiento_seguro",
-    "equipo_limpio",
-    "orden_aseo",
-    "delimitacion_etiquetado",
-    "permisos",
-    "extintores",
-    "botiquin",
-    "arnes_eslinga",
-    "dotacion",
-    "epp",
-    "rotulacion",
-    "matriz_compatibilidad",
-    "demarcacion_bomba",
-    "orden_aseo_concreto",
-    "epp_operario_auxiliar",
-    "kit_mantenimiento",
-    "combustible",
-    "horas_motor",
-    "grasa",
-    "planillas"
+    "tuberia_desplazamiento_seguro"
   ];
 
   const faltantes = camposRequeridos.filter(
@@ -130,36 +102,63 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    // ...existing code for camposValidos, normalización, etc...
     const columnas = await obtenerCamposValidosYRequeridos(db, "checklist");
     const camposValidos = columnas.map(col => col.nombre);
+    // Campos que NO se normalizan (numéricos, fechas, texto libre)
+    const noNormalizar = new Set([
+      "radio_marca_serial_estado", "arnes_marca_serial_fecha_estado", "eslinga_marca_serial_fecha_estado",
+      "combustible_pimpinas", "ultima_fecha_lavado_tanque", "dias_grasa", "punto_engrase_tapado",
+      "ultima_fecha_mantenimiento_salida", "mangueras_3_pulgadas", "mangueras_4_pulgadas", "mangueras_5_pulgadas",
+      "mangueras_sin_acoples", "numero_piso_fundiendo", "cantidad_puntos_anclaje", "ultima_fecha_medicion_espesores"
+    ]);
     const optionFields = new Set(camposValidos.filter(
       k => k.endsWith("_observacion") === false &&
-        // Excluir campos numéricos de tipo *_galones para no normalizarlos a strings como "REGULAR"
         !k.endsWith("_galones") &&
-        k !== "id" && k !== "observaciones" &&
+        !noNormalizar.has(k) &&
+        k !== "id" && k !== "observaciones" && k !== "empresa_id" &&
         k !== "nombre_cliente" && k !== "nombre_proyecto" &&
         k !== "fecha_servicio" && k !== "nombre_operador" &&
         k !== "bomba_numero" && k !== "horometro_motor"
     ));
-    function normalizeOption(val) {
+    // Normaliza valores según opciones del formulario (Bueno/Malo, SI/NO, Limpio, etc.)
+    function normalizeOption(val, campo) {
       if (val === undefined || val === null) return "REGULAR";
       if (typeof val === "string") {
-        const s = val.trim().toUpperCase();
-        if (["BUENO", "REGULAR", "MALO"].includes(s)) return s;
+        const s = val.trim().toUpperCase().replace(/\s+/g, "_");
+        const estandar = ["BUENO", "REGULAR", "MALO"];
+        if (estandar.includes(s)) return s;
         if (["B", "GOOD"].includes(s)) return "BUENO";
         if (["R", "AVERAGE"].includes(s)) return "REGULAR";
         if (["M", "BAD"].includes(s)) return "MALO";
+        // chasis_aceite_motor, aceite_hidrolavadora: Bueno - Emulsionado
+        if (s === "EMULSIONADO") return "EMULSIONADO";
+        // chasis_nivel_refrigerante: Bajo - Normal
+        if (["BAJO", "NORMAL"].includes(s)) return s;
+        // sensor_motor_aspas, mecanismo_tubo_s, vertical_tallo_recta: SI - NO
+        if (["SI", "NO"].includes(s)) return s;
+        // filtro_primario_combustible: Limpio - No limpio
+        if (s === "LIMPIO") return "LIMPIO";
+        if (["NO_LIMPIO", "NOLIMPIO", "NO LIMPIO"].includes(s)) return "NO LIMPIO";
+        // drenaje_filtro_combustible: Realizado - No realizado
+        if (s === "REALIZADO") return "Realizado";
+        if (["NO_REALIZADO", "NOREALIZADO", "NO REALIZADO"].includes(s)) return "No realizado";
+        // partes_faltantes_nuevo: Si faltan - No faltan
+        if (["SI_FALTAN", "FALTAN"].includes(s)) return "Si faltan";
+        if (["NO_FALTAN", "NOFALTAN"].includes(s)) return "No faltan";
+        // caja_agua_condiciones: Cumple - No cumple
+        if (["CUMPLE", "CUMPLE_CON_CONDICIONES"].includes(s)) return "Cumple con las condiciones";
+        if (["NO_CUMPLE", "NOCUMPLE"].includes(s)) return "No cumple con las condiciones";
         return "REGULAR";
       }
       return "REGULAR";
     }
     camposValidos.forEach(campo => {
       if (optionFields.has(campo) && data[campo] !== undefined) {
-        data[campo] = normalizeOption(data[campo]);
+        data[campo] = normalizeOption(data[campo], campo);
       }
     });
-    const campos = Object.keys(data).filter(key => camposValidos.includes(key));
+    const camposExcluidos = new Set(['equipo_limpio', 'equipo_limpio_observacion', 'embolos_empuje', 'embolos_empuje_observacion']);
+    const campos = Object.keys(data).filter(key => camposValidos.includes(key) && !camposExcluidos.has(key));
     const valores = campos.map(key => data[key]);
     const placeholders = campos.map((_, i) => `$${i + 1}`).join(", ");
     if (campos.length === 0) {
@@ -186,7 +185,7 @@ router.post("/", async (req, res) => {
       const generarPDFPorChecklist = adminModule.generarPDFPorChecklist || (adminModule.default && adminModule.default.generarPDFPorChecklist);
       if (typeof generarPDFPorChecklist !== 'function') throw new Error('No se pudo importar la función generarPDFPorChecklist');
       
-      // Incluir campos básicos del formulario
+      // Incluir todos los campos del checklist para el PDF (compatibles con checklist_admin_template.xlsx)
       const datosPDF = {
         nombre_cliente: data.nombre_cliente || '',
         nombre_proyecto: data.nombre_proyecto || '',
@@ -195,23 +194,38 @@ router.post("/", async (req, res) => {
         bomba_numero: data.bomba_numero || '',
         horometro_motor: data.horometro_motor || ''
       };
-      
-      // Agregar campos REGULAR o MALO y sus observaciones
-      const camposValidosPDF = Object.keys(data);
-      camposValidosPDF.forEach(campo => {
-        if (typeof data[campo] === 'string' && (data[campo].toUpperCase() === 'REGULAR' || data[campo].toUpperCase() === 'MALO')) {
+      if (data.empresa_id != null) datosPDF.empresa_id = data.empresa_id;
+      if (data.observaciones) datosPDF.observaciones = data.observaciones;
+      // Pasar todos los campos del checklist y sus observaciones al PDF
+      Object.keys(data).forEach(campo => {
+        if (camposValidos.includes(campo) && data[campo] !== undefined && data[campo] !== null) {
           datosPDF[campo] = data[campo];
-          // Busca observación asociada si existe
-          const obsKey = campo + '_observacion';
-          if (data[obsKey]) {
-            datosPDF[obsKey] = data[obsKey];
-          }
         }
       });
       
       // Genera el PDF con todos los datos necesarios
       pdfBuf = await generarPDFPorChecklist(datosPDF);
       
+      // Destinatarios: siempre dir.bombas + email del departamento según obra
+      const correoFijo = 'dir.bombas@gruasyequipos.com';
+      const correos = new Set([correoFijo]);
+      try {
+        const obraRes = await db.query(
+          `SELECT o.departamento_id, d.email
+           FROM obras o
+           LEFT JOIN departamentos d ON d.id = o.departamento_id
+           WHERE o.nombre_obra ILIKE $1
+           LIMIT 1`,
+          [data.nombre_proyecto || '']
+        );
+        if (obraRes.rows.length > 0 && obraRes.rows[0].email) {
+          correos.add(obraRes.rows[0].email.trim());
+        }
+      } catch (qErr) {
+        console.warn('No se pudo obtener email por departamento (tabla departamentos/obras puede no estar configurada):', qErr.message);
+      }
+      const destinatarios = [...correos].filter(Boolean).join(', ');
+
       // Enviar correo con PDF adjunto
       const nodemailer = await import('nodemailer');
       const transporter = nodemailer.default.createTransport({
@@ -225,7 +239,7 @@ router.post("/", async (req, res) => {
       });
       await transporter.sendMail({
         from: process.env.SMTP_FROM,
-        to: 'scliente@allinconcrete.com.co, administracion@allinconcrete.com.co, comercial.operativa@allinconcrete.com.co, dir.operativabta@allinconcrete.com.co',
+        to: destinatarios,
         subject: 'Nuevo checklist registrado',
         text: 'Se ha registrado un nuevo checklist. Adjuntamos el PDF generado automáticamente.',
         attachments: [{ filename: 'checklist.pdf', content: pdfBuf }]
