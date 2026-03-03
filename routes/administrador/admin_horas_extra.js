@@ -327,7 +327,7 @@ async function handleBuscar(req, res) {
   try {
     db = ensureDb();
     const pool = db;
-    const { nombre, obra, constructora, empresa_id, fecha_inicio, fecha_fin, limit = 200, offset = 0 } = req.body || {};
+    const { nombre, obra, constructora, empresa_id, empresa_ids, fecha_inicio, fecha_fin, limit = 200, offset = 0 } = req.body || {};
     const start = formatDateOnly(fecha_inicio);
     const end = formatDateOnly(fecha_fin) || todayDateString();
 
@@ -337,7 +337,17 @@ async function handleBuscar(req, res) {
     if (nombre) { clauses.push(`nombre_operador ILIKE $${idx++}`); values.push(`%${nombre}%`); }
     if (obra) { clauses.push(`nombre_proyecto ILIKE $${idx++}`); values.push(`%${obra}%`); }
     if (constructora) { clauses.push(`nombre_cliente ILIKE $${idx++}`); values.push(`%${constructora}%`); }
-    if (empresa_id !== undefined && empresa_id !== null && String(empresa_id).trim() !== '' && !isNaN(Number(empresa_id))) { clauses.push(`empresa_id = $${idx++}`); values.push(Number(empresa_id)); }
+    const ids = Array.isArray(empresa_ids) && empresa_ids.length > 0
+      ? empresa_ids.filter(id => !isNaN(Number(id))).map(id => Number(id))
+      : (empresa_id !== undefined && empresa_id !== null && String(empresa_id).trim() !== '' && !isNaN(Number(empresa_id)))
+        ? [Number(empresa_id)]
+        : null;
+    if (ids && ids.length > 0) {
+      const placeholders = ids.map((_, i) => `$${idx + i}`).join(', ');
+      clauses.push(`empresa_id IN (${placeholders})`);
+      values.push(...ids);
+      idx += ids.length;
+    }
     if (start) { clauses.push(`CAST(fecha_servicio AS date) >= $${idx++}`); values.push(start); }
     if (end) { clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`); values.push(end); }
 
@@ -371,7 +381,7 @@ async function handleResumen(req, res) {
   try {
     db = ensureDb();
     const pool = db;
-    const { nombre, obra, constructora, empresa_id, fecha_inicio, fecha_fin, limit = 1000, offset = 0 } = req.body || {};
+    const { nombre, obra, constructora, empresa_id, empresa_ids, fecha_inicio, fecha_fin, limit = 1000, offset = 0 } = req.body || {};
     const start = formatDateOnly(fecha_inicio);
     const end = formatDateOnly(fecha_fin) || todayDateString();
 
@@ -381,7 +391,17 @@ async function handleResumen(req, res) {
     if (nombre) { clauses.push(`nombre_operador ILIKE $${idx++}`); values.push(`%${nombre}%`); }
     if (obra) { clauses.push(`nombre_proyecto ILIKE $${idx++}`); values.push(`%${obra}%`); }
     if (constructora) { clauses.push(`nombre_cliente ILIKE $${idx++}`); values.push(`%${constructora}%`); }
-    if (empresa_id !== undefined && empresa_id !== null && String(empresa_id).trim() !== '' && !isNaN(Number(empresa_id))) { clauses.push(`empresa_id = $${idx++}`); values.push(Number(empresa_id)); }
+    const ids = Array.isArray(empresa_ids) && empresa_ids.length > 0
+      ? empresa_ids.filter(id => !isNaN(Number(id))).map(id => Number(id))
+      : (empresa_id !== undefined && empresa_id !== null && String(empresa_id).trim() !== '' && !isNaN(Number(empresa_id)))
+        ? [Number(empresa_id)]
+        : null;
+    if (ids && ids.length > 0) {
+      const placeholders = ids.map((_, i) => `$${idx + i}`).join(', ');
+      clauses.push(`empresa_id IN (${placeholders})`);
+      values.push(...ids);
+      idx += ids.length;
+    }
     if (start) { clauses.push(`CAST(fecha_servicio AS date) >= $${idx++}`); values.push(start); }
     if (end) { clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`); values.push(end); }
 
@@ -528,7 +548,7 @@ async function handleDescargar(req, res) {
   try {
     db = ensureDb();
     const pool = db;
-    const { nombre, obra, constructora, empresa_id, fecha_inicio, fecha_fin, formato = 'excel', limit = 50000 } = req.body || {};
+    const { nombre, obra, constructora, empresa_id, empresa_ids, fecha_inicio, fecha_fin, formato = 'excel', limit = 50000 } = req.body || {};
     const start = formatDateOnly(fecha_inicio);
     const end = formatDateOnly(fecha_fin) || todayDateString();
 
@@ -538,7 +558,17 @@ async function handleDescargar(req, res) {
     if (nombre) { clauses.push(`nombre_operador ILIKE $${idx++}`); values.push(`%${nombre}%`); }
     if (obra) { clauses.push(`nombre_proyecto ILIKE $${idx++}`); values.push(`%${obra}%`); }
     if (constructora) { clauses.push(`nombre_cliente ILIKE $${idx++}`); values.push(`%${constructora}%`); }
-    if (empresa_id !== undefined && empresa_id !== null && String(empresa_id).trim() !== '' && !isNaN(Number(empresa_id))) { clauses.push(`empresa_id = $${idx++}`); values.push(Number(empresa_id)); }
+    const ids = Array.isArray(empresa_ids) && empresa_ids.length > 0
+      ? empresa_ids.filter(id => !isNaN(Number(id))).map(id => Number(id))
+      : (empresa_id !== undefined && empresa_id !== null && String(empresa_id).trim() !== '' && !isNaN(Number(empresa_id)))
+        ? [Number(empresa_id)]
+        : null;
+    if (ids && ids.length > 0) {
+      const placeholders = ids.map((_, i) => `$${idx + i}`).join(', ');
+      clauses.push(`empresa_id IN (${placeholders})`);
+      values.push(...ids);
+      idx += ids.length;
+    }
     if (start) { clauses.push(`CAST(fecha_servicio AS date) >= $${idx++}`); values.push(start); }
     if (end) { clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`); values.push(end); }
 
