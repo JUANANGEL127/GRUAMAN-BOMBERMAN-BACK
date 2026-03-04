@@ -666,26 +666,22 @@ async function handleDescargar(req, res) {
         wsResumen.getCell('A1').font = { bold: true, size: 14 };
         wsResumen.getCell('A1').alignment = { horizontal: 'center' };
         
-        // Encabezados
-        wsResumen.getRow(3).values = ['Nombre', 'Cargo', 'Días Trabajados', 'Horas Trabajadas', 'Extra Diurna', 'Extra Nocturna', 'Extra Festiva', 'Total Extras'];
-        wsResumen.getRow(3).font = { bold: true };
-        wsResumen.getRow(3).eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0B2' } }; });
-        
-        // Datos
-        resumenUsuarios.forEach((u, i) => {
-          wsResumen.getRow(4 + i).values = [
-            u.nombre_operador,
-            u.cargo,
-            u.total_dias_trabajados,
-            u.total_horas_trabajadas,
-            u.total_extra_diurna,
-            u.total_extra_nocturna,
-            u.total_extra_festiva,
-            u.total_horas_extras
-          ];
+        const colNames = ['Nombre', 'Cargo', 'Días Trabajados', 'Horas Trabajadas', 'Extra Diurna', 'Extra Nocturna', 'Extra Festiva', 'Total Extras'];
+        wsResumen.addTable({
+          name: `TablaResumen_${mesAnio.replace('-', '_')}`,
+          ref: 'A3',
+          headerRow: true,
+          totalsRow: false,
+          style: { theme: 'TableStyleMedium2', showRowStripes: true },
+          columns: colNames.map(n => ({ name: n, filterButton: true })),
+          rows: resumenUsuarios.map(u => [
+            u.nombre_operador, u.cargo, u.total_dias_trabajados,
+            u.total_horas_trabajadas, u.total_extra_diurna,
+            u.total_extra_nocturna, u.total_extra_festiva, u.total_horas_extras
+          ])
         });
-        
-        // Fila de totales
+
+        // Fila de totales debajo de la tabla
         const totalRow = 4 + resumenUsuarios.length;
         wsResumen.getRow(totalRow).values = [
           'TOTAL MES', '',
@@ -698,28 +694,32 @@ async function handleDescargar(req, res) {
         ];
         wsResumen.getRow(totalRow).font = { bold: true };
         wsResumen.getRow(totalRow).eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'C8E6C9' } }; });
-        
+
         // Ajustar anchos
-        wsResumen.columns = [
-          { width: 30 }, { width: 20 }, { width: 18 }, { width: 18 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }
-        ];
+        [30, 20, 18, 18, 15, 15, 15, 15].forEach((w, i) => { wsResumen.getColumn(i + 1).width = w; });
       }
 
       // Última hoja: Registros Detallados
       const ws = workbook.addWorksheet('Registros Detallados');
       if (rows.length > 0) {
         const keys = Object.keys(rows[0]);
-        ws.columns = keys.map(k => ({ header: k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()), key: k, width: 20 }));
-        rows.forEach(r => {
-          const rowObj = {};
-          ws.columns.forEach(col => {
-            let val = r[col.key];
-            if (col.key === 'fecha_servicio') val = val ? val : '';
-            else if (val === null || val === undefined) val = '';
-            else if (typeof val === 'object') { try { val = JSON.stringify(val); } catch(e){ val = String(val); } }
-            rowObj[col.key] = val;
-          });
-          ws.addRow(rowObj);
+        ws.addTable({
+          name: 'TablaRegistrosDetallados',
+          ref: 'A1',
+          headerRow: true,
+          totalsRow: false,
+          style: { theme: 'TableStyleMedium2', showRowStripes: true },
+          columns: keys.map(k => ({ name: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), filterButton: true })),
+          rows: rows.map(r => keys.map(k => {
+            let val = r[k];
+            if (k === 'fecha_servicio') return val ? val : '';
+            if (val === null || val === undefined) return '';
+            if (typeof val === 'object') { try { return JSON.stringify(val); } catch(e) { return String(val); } }
+            return val;
+          }))
+        });
+        keys.forEach((k, i) => {
+          ws.getColumn(i + 1).width = Math.min(60, Math.max(12, k.replace(/_/g, ' ').length + 4));
         });
       }
       res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

@@ -301,26 +301,19 @@ router.post('/descargar', async (req, res) => {
         'observaciones', 'motivo_suspension', 'nombre_suspende', 'nombre_responsable', 'nombre_coordinador'
       ];
 
-      // Definir columnas del worksheet
-      ws.columns = keys.map(k => ({ header: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), key: k, width: 18 }));
-
-      // Añadir filas: normalizamos fecha y valores nulos
-      q.rows.forEach(r => {
-        const rowObj = {};
-        keys.forEach(k => {
-          if (k === 'fecha_servicio') {
-            rowObj[k] = r[k] ? formatDateOnly(r[k]) : '';
-          } else {
-            rowObj[k] = r[k] !== undefined && r[k] !== null ? r[k] : '';
-          }
-        });
-        ws.addRow(rowObj);
+      ws.addTable({
+        name: 'TablaPermisosTrabajo',
+        ref: 'A1',
+        headerRow: true,
+        totalsRow: false,
+        style: { theme: 'TableStyleMedium2', showRowStripes: true },
+        columns: keys.map(k => ({ name: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), filterButton: true })),
+        rows: q.rows.map(r => keys.map(k =>
+          k === 'fecha_servicio' ? (r[k] ? formatDateOnly(r[k]) : '') : (r[k] !== undefined && r[k] !== null ? r[k] : '')
+        ))
       });
-
-      // Auto width (opcional ligero): limitar a 50
-      ws.columns.forEach(col => {
-        if (!col.width || col.width < 12) col.width = 12;
-        if (col.width > 50) col.width = 50;
+      keys.forEach((k, i) => {
+        ws.getColumn(i + 1).width = Math.min(50, Math.max(12, k.replace(/_/g, ' ').length + 4));
       });
 
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

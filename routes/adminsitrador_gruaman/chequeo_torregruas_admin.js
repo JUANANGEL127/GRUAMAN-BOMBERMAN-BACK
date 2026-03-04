@@ -159,35 +159,24 @@ router.post('/descargar', async (req, res) => {
         return res.end();
       }
 
-      // Usar las claves de la primera fila para construir todas las columnas dinámicamente
       const keys = Object.keys(q.rows[0]);
-      ws.columns = keys.map(k => ({
-        header: k.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
-        key: k,
-        width: 20
-      }));
-
-      // Añadir filas completas; formatear fecha_servicio y convertir valores no primitivos
-      q.rows.forEach(r => {
-        const rowObj = {};
-        keys.forEach(k => {
+      ws.addTable({
+        name: 'TablaChequeoTorreGruas',
+        ref: 'A1',
+        headerRow: true,
+        totalsRow: false,
+        style: { theme: 'TableStyleMedium2', showRowStripes: true },
+        columns: keys.map(k => ({ name: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), filterButton: true })),
+        rows: q.rows.map(r => keys.map(k => {
           let val = r[k];
-          if (k === 'fecha_servicio') {
-            val = val ? formatDateOnly(val) : '';
-          } else if (val === null || val === undefined) {
-            val = '';
-          } else if (typeof val === 'object') {
-            try { val = JSON.stringify(val); } catch (e) { val = String(val); }
-          }
-          rowObj[k] = val;
-        });
-        ws.addRow(rowObj);
+          if (k === 'fecha_servicio') return val ? formatDateOnly(val) : '';
+          if (val === null || val === undefined) return '';
+          if (typeof val === 'object') { try { return JSON.stringify(val); } catch(e) { return String(val); } }
+          return val;
+        }))
       });
-
-      // Ajuste ligero de anchuras (opcional)
-      ws.columns.forEach(col => {
-        if (!col.width || col.width < 12) col.width = 12;
-        if (col.width > 60) col.width = 60;
+      keys.forEach((k, i) => {
+        ws.getColumn(i + 1).width = Math.min(60, Math.max(12, k.replace(/_/g, ' ').length + 4));
       });
 
       res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

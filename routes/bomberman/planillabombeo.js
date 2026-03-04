@@ -332,47 +332,49 @@ router.get("/exportar", async (req, res) => {
     const remisionesResult = await db.query(`SELECT * FROM remisiones`);
     const remisiones = remisionesResult.rows;
 
-    // Crea un nuevo libro de Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Planillas de Bombeo");
 
-    // Define las columnas del archivo Excel
-    worksheet.columns = [
-      { header: "ID", key: "id", width: 10 },
-      { header: "Nombre Cliente", key: "nombre_cliente", width: 30 },
-      { header: "Nombre Proyecto", key: "nombre_proyecto", width: 30 },
-      { header: "Fecha Servicio", key: "fecha_servicio", width: 15 },
-      { header: "Bomba Número", key: "bomba_numero", width: 15 },
-      { header: "Galones Inicio ACPM", key: "galones_inicio_acpm", width: 20 },
-      { header: "Galones Final ACPM", key: "galones_final_acpm", width: 20 },
-      { header: "Galones Pinpina", key: "galones_pinpina", width: 20 },
-      { header: "Horómetro Inicial", key: "horometro_inicial", width: 20 },
-      { header: "Horómetro Final", key: "horometro_final", width: 20 },
-      { header: "Nombre Operador", key: "nombre_operador", width: 30 },
-      { header: "Nombre Auxiliar", key: "nombre_auxiliar", width: 30 },
-      { header: "Total Metros Bombeados", key: "total_metros_cubicos_bombeados", width: 25 },
-      { header: "Remisiones", key: "remisiones", width: 50 }
+    const colDefs = [
+      { key: 'id', header: 'ID', width: 10 },
+      { key: 'nombre_cliente', header: 'Nombre Cliente', width: 30 },
+      { key: 'nombre_proyecto', header: 'Nombre Proyecto', width: 30 },
+      { key: 'fecha_servicio', header: 'Fecha Servicio', width: 15 },
+      { key: 'bomba_numero', header: 'Bomba Número', width: 15 },
+      { key: 'galones_inicio_acpm', header: 'Galones Inicio ACPM', width: 22 },
+      { key: 'galones_final_acpm', header: 'Galones Final ACPM', width: 20 },
+      { key: 'galones_pinpina', header: 'Galones Pinpina', width: 18 },
+      { key: 'horometro_inicial', header: 'Horómetro Inicial', width: 20 },
+      { key: 'horometro_final', header: 'Horómetro Final', width: 18 },
+      { key: 'nombre_operador', header: 'Nombre Operador', width: 30 },
+      { key: 'nombre_auxiliar', header: 'Nombre Auxiliar', width: 30 },
+      { key: 'total_metros_cubicos_bombeados', header: 'Total Metros Bombeados', width: 25 },
+      { key: 'remisiones', header: 'Remisiones', width: 50 }
     ];
 
-    // Agrega las filas con los datos
-    planillas.forEach(planilla => {
-      const remisionesAsociadas = remisiones
-        .filter(r => r.planilla_bombeo_id === planilla.id)
-        .map(r => `Remisión: ${r.remision}, Manguera: ${r.manguera}, Metros: ${r.metros}`)
-        .join(" | ");
-
-      worksheet.addRow({
-        ...planilla,
-        remisiones: remisionesAsociadas
-      });
+    worksheet.addTable({
+      name: 'TablaPlanillasBombeo',
+      ref: 'A1',
+      headerRow: true,
+      totalsRow: false,
+      style: { theme: 'TableStyleMedium2', showRowStripes: true },
+      columns: colDefs.map(c => ({ name: c.header, filterButton: true })),
+      rows: planillas.map(planilla => {
+        const remisionesAsociadas = remisiones
+          .filter(r => r.planilla_bombeo_id === planilla.id)
+          .map(r => `Remisión: ${r.remision}, Manguera: ${r.manguera}, Metros: ${r.metros}`)
+          .join(" | ");
+        return colDefs.map(c => {
+          if (c.key === 'remisiones') return remisionesAsociadas;
+          const val = planilla[c.key];
+          return val !== null && val !== undefined ? val : '';
+        });
+      })
     });
+    colDefs.forEach((c, i) => { worksheet.getColumn(i + 1).width = c.width; });
 
-    
-    // Configura el archivo para ser descargado
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", "attachment; filename=planillas_bombeo.xlsx");
-
-    // Escribe el archivo en el stream de respuesta
     await workbook.xlsx.write(res);
     res.end();
   } catch (error) {
