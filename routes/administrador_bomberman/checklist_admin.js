@@ -247,49 +247,87 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
     const filtrados = q.rows.map(filtraChecklist).filter(r => r !== null);
 
     if (formato === 'excel') {
-      // Deduplicar por id (evita filas repetidas)
-      const seen = new Set();
-      const rowsUnicos = filtrados.filter(r => {
-        const id = r?.id;
-        if (id != null && seen.has(id)) return false;
-        if (id != null) seen.add(id);
-        return true;
-      });
-
-      // Excel plano: un registro por fila, cada campo en columna (sin template)
-      // Solo registros con al menos un campo REGULAR o MALO (no solo BUENO)
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Checklist');
-      if (!rowsUnicos.length) {
+      if (!q.rows.length) {
         res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition','attachment; filename=checklist.xlsx');
         await workbook.xlsx.write(res);
         return res.end();
       }
-      const keys = Object.keys(rowsUnicos[0]);
-      ws.columns = keys.map(k => ({
-        header: k.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
-        key: k,
-        width: 20
-      }));
-      rowsUnicos.forEach(r => {
-        const rowObj = {};
-        keys.forEach(k => {
-          let val = r[k];
+
+      // Campos de identificación: siempre visibles
+      const camposBasicos = new Set(['id', 'empresa_id', 'signio_transaccion_id', 'fecha_servicio',
+        'nombre_cliente', 'nombre_proyecto', 'nombre_operador', 'bomba_numero', 'horometro_motor', 'observaciones']);
+
+      // Campos de texto libre / numéricos / fechas: siempre mostrar su valor
+      const noSeleccion = new Set([
+        'radio_marca_serial_estado', 'arnes_marca_serial_fecha_estado', 'eslinga_marca_serial_fecha_estado',
+        'combustible_pimpinas', 'ultima_fecha_lavado_tanque', 'dias_grasa', 'punto_engrase_tapado',
+        'ultima_fecha_mantenimiento_salida', 'mangueras_3_pulgadas', 'mangueras_4_pulgadas', 'mangueras_5_pulgadas',
+        'mangueras_sin_acoples', 'numero_piso_fundiendo', 'cantidad_puntos_anclaje', 'ultima_fecha_medicion_espesores'
+      ]);
+
+      // Valores "buenos" que se omiten en campos de selección
+      const valoresBueno = new Set(['BUENO', 'SI', 'LIMPIO', 'REALIZADO', 'NORMAL', 'NO FALTAN', 'CUMPLE CON LAS CONDICIONES']);
+
+      const allKeys = Object.keys(q.rows[0]);
+
+      // Procesar filas: blanquear campos selección con valor "bueno/si"
+      const processedRows = q.rows.map(row => {
+        const result = {};
+        allKeys.forEach(k => {
+          let val = row[k];
           if (k === 'fecha_servicio') {
-            val = val ? formatDateOnly(val) : '';
-          } else if (val === null || val === undefined) {
-            val = '';
-          } else if (typeof val === 'object') {
-            try { val = JSON.stringify(val); } catch (e) { val = String(val); }
+            result[k] = val ? formatDateOnly(val) : '';
+            return;
           }
-          rowObj[k] = val;
+          if (val === null || val === undefined) { result[k] = ''; return; }
+
+          const esBasico = camposBasicos.has(k);
+          const esObservacion = k.endsWith('_observacion');
+          const esGalones = k.endsWith('_galones');
+          const esNoSeleccion = noSeleccion.has(k);
+
+          if (esBasico || esNoSeleccion || esGalones) {
+            result[k] = typeof val === 'object' ? JSON.stringify(val) : String(val);
+            return;
+          }
+          if (esObservacion) {
+            result[k] = val ? String(val) : '';
+            return;
+          }
+          // Campo de selección: mostrar solo si NO es "bueno/si"
+          const valUpper = String(val).trim().toUpperCase();
+          result[k] = valoresBueno.has(valUpper) ? '' : String(val);
         });
-        ws.addRow(rowObj);
+        return result;
       });
-      ws.columns.forEach(col => {
-        if (!col.width || col.width < 12) col.width = 12;
-        if (col.width > 60) col.width = 60;
+
+      // Incluir solo columnas que tengan al menos un valor no vacío (excepto básicos que van siempre)
+      const keysToInclude = allKeys.filter(k =>
+        camposBasicos.has(k) || processedRows.some(r => r[k] !== '' && r[k] != null)
+      );
+
+      ws.addTable({
+        name: 'ChecklistTable',
+        ref: 'A1',
+        headerRow: true,
+        totalsRow: false,
+        style: { theme: 'TableStyleMedium2', showRowStripes: true },
+        columns: keysToInclude.map(k => ({
+          name: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+          filterButton: true
+        })),
+        rows: processedRows.map(r => keysToInclude.map(k => r[k] ?? ''))
+      });
+      keysToInclude.forEach((k, i) => {
+        const col = ws.getColumn(i + 1);
+        const maxLen = Math.max(
+          k.replace(/_/g, ' ').length,
+          ...processedRows.map(r => String(r[k] ?? '').length)
+        );
+        col.width = Math.min(60, Math.max(12, maxLen + 2));
       });
       res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition','attachment; filename=checklist.xlsx');
