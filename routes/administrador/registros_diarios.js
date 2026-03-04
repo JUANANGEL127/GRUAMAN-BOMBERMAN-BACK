@@ -353,41 +353,43 @@ router.post('/descargar', async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="registros_diarios_${filenameUser}_${startDate}_${endDate}.xlsx"`);
 
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Registros Diarios');
+    const workbookWriter = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res });
+    const worksheet = workbookWriter.addWorksheet('Registros Diarios');
 
-    const colDefs = [
-      { key: 'fecha', header: 'Fecha', width: 15 },
-      { key: 'nombre', header: 'Nombre Usuario', width: 30 },
-      { key: 'empresa', header: 'Empresa', width: 30 },
-      { key: 'nombre_proyecto', header: 'Nombre Proyecto', width: 30 },
-      { key: 'total_registros', header: 'Total Registros', width: 16 },
-      { key: 'formatos_llenos', header: 'Formatos Llenos', width: 40 },
-      { key: 'formatos_faltantes', header: 'Formatos Faltantes', width: 40 }
+    worksheet.columns = [
+      { header: 'Fecha', key: 'fecha', width: 15 },
+      { header: 'Nombre Usuario', key: 'nombre', width: 30 },
+      { header: 'Empresa', key: 'empresa', width: 30 },
+      { header: 'Nombre Proyecto', key: 'nombre_proyecto', width: 30 },
+      { header: 'Total Registros', key: 'total_registros', width: 16 },
+      { header: 'Formatos Llenos', key: 'formatos_llenos', width: 40 },
+      { header: 'Formatos Faltantes', key: 'formatos_faltantes', width: 40 }
     ];
 
-    worksheet.addTable({
-      name: 'TablaRegistrosDiarios',
-      ref: 'A1',
-      headerRow: true,
-      totalsRow: false,
-      style: { theme: 'TableStyleMedium2', showRowStripes: true },
-      columns: colDefs.map(c => ({ name: c.header, filterButton: true })),
-      rows: resultadosPorFecha.map(row => [
-        row.fecha,
-        row.nombre,
-        row.empresa || '',
-        row.nombre_proyecto || '',
-        row.total_registros,
-        (row.formatos_llenos || []).join(', '),
-        (row.formatos_faltantes || []).join(', ')
-      ])
-    });
-    colDefs.forEach((c, i) => { worksheet.getColumn(i + 1).width = c.width; });
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+    headerRow.commit();
 
-    console.log(`[DESCARGAR REGISTROS DIARIOS] Escribiendo ${resultadosPorFecha.length} filas en Excel`);
-    await workbook.xlsx.write(res);
-    console.log(`[DESCARGAR REGISTROS DIARIOS] Archivo enviado exitosamente`);
+    let written = 0;
+    for (const row of resultadosPorFecha) {
+      const r = worksheet.addRow({
+        fecha: row.fecha,
+        nombre: row.nombre,
+        empresa: row.empresa || '',
+        nombre_proyecto: row.nombre_proyecto || '',
+        total_registros: row.total_registros,
+        formatos_llenos: (row.formatos_llenos || []).join(', '),
+        formatos_faltantes: (row.formatos_faltantes || []).join(', ')
+      });
+      r.commit();
+      written++;
+    }
+
+    console.log(`[DESCARGAR REGISTROS DIARIOS] Escribiendo ${written} filas en Excel (stream)`);
+    await workbookWriter.commit();
+    console.log(`[DESCARGAR REGISTROS DIARIOS] Archivo enviado exitosamente (stream)`);
 
   } catch (error) {
     console.error("Error en /registros_diarios/descargar:", error);
