@@ -31,6 +31,7 @@ import adminHorasExtraRouter from './routes/administrador/admin_horas_extra.js';
 import webauthnRouter from './routes/webauthn.js';
 import signioRouter from './routes/signio.js';
 import registrosDiariosRouter from './routes/administrador/registros_diarios.js';
+import authPinRouter from './routes/auth_pin.js';
 
 
 // Cargar variables de entorno según el entorno
@@ -74,6 +75,7 @@ app.use("/bomberman/planillabombeo", planillaBombeoRouter);
 app.use("/bomberman/checklist", checklistRouter);
 app.use('/webauthn', webauthnRouter);
 app.use('/signio', signioRouter);
+app.use('/auth/pin', authPinRouter);
 app.use('/api', registrosDiariosRouter);
 
 // Configuración de la conexión a PostgreSQL
@@ -120,6 +122,10 @@ global.db = pool;
       empresa VARCHAR(50) NOT NULL DEFAULT ''
     );
   `);
+
+  // Añade columnas de PIN si no existen (migraciones seguras)
+  await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS pin_habilitado BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+  await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS pin_hash VARCHAR(100)`).catch(() => {});
 
   // --- ELIMINADO: registros_horas ---
   // await pool.query(`
