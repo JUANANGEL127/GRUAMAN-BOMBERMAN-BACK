@@ -32,6 +32,7 @@ import webauthnRouter from './routes/webauthn.js';
 import signioRouter from './routes/signio.js';
 import registrosDiariosRouter from './routes/administrador/registros_diarios.js';
 import authPinRouter from './routes/auth_pin.js';
+import pqrRouter from './routes/sst/pqr.js';
 
 
 // Cargar variables de entorno según el entorno
@@ -476,6 +477,21 @@ global.db = pool;
   // Limpiar locks viejos (más de 1 día) al iniciar
   await pool.query(`DELETE FROM cron_locks WHERE created_at < NOW() - INTERVAL '1 day'`).catch(() => {});
 
+  // --- TABLA PQR (SST) ---
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pqr (
+      id SERIAL PRIMARY KEY,
+      nombre_cliente VARCHAR(255) NOT NULL,
+      nombre_proyecto VARCHAR(255) NOT NULL,
+      fecha_servicio DATE NOT NULL,
+      nombre_operador VARCHAR(255) NOT NULL,
+      nombre_director VARCHAR(255) NOT NULL,
+      area VARCHAR(255) NOT NULL,
+      pqr TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
   // --- NUEVA TABLA PARA HORAS DE JORNADA ---
   await pool.query(`
   CREATE TABLE IF NOT EXISTS horas_jornada (
@@ -732,6 +748,7 @@ app.use("/gruaman/inspeccion_izaje", inspeccionIzajeRouter);
 app.use("/gruaman/chequeo_elevador", chequeoElevadorRouter);
 app.use("/bomberman/inventariosobra", inventariosObraRouter);
 app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
+app.use("/sst/pqr", pqrRouter);
 
 // IMPORTA Y USA EL ROUTER DESPUÉS DE global.db Y DESPUÉS DE LA CREACIÓN DE TABLAS:
 const { default: horaJornadaRouter } = await import("./routes/compartido/hora_llegada_salida.js");
