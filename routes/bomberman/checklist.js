@@ -33,60 +33,17 @@ router.post("/", async (req, res) => {
   }
   let data = req.body;
 
-  // Campos requeridos según la estructura de la tabla checklist (columnas NOT NULL)
+  // Solo se validan los campos de cabecera comunes a todos los cargos.
+  // Los campos de inspección varían según el cargo (operario/auxiliar): el
+  // frontend envía únicamente los campos del cargo activo, por lo que
+  // validar campos de ambos cargos aquí rechazaría siempre con 400.
   const camposRequeridos = [
     "nombre_cliente",
     "nombre_proyecto",
     "fecha_servicio",
     "nombre_operador",
     "bomba_numero",
-    "horometro_motor",
-    "chasis_aceite_motor",
-    "chasis_nivel_combustible",
-    "chasis_nivel_refrigerante",
-    "chasis_presion_llantas",
-    "chasis_fugas",
-    "chasis_soldadura",
-    "chasis_integridad_cubierta",
-    "chasis_herramientas_productos_diversos",
-    "chasis_sistema_alberca",
-    "chasis_nivel_agua",
-    "anillos",
-    "placa_gafa",
-    "cilindros_atornillados",
-    "partes_faltantes",
-    "mecanismo_s",
-    "estado_oring",
-    "funcion_vibrador",
-    "paletas_eje_agitador",
-    "motor_accionamiento",
-    "valvula_control",
-    "hidraulico_fugas",
-    "hidraulico_cilindros_botellas_estado",
-    "hidraulico_indicador_nivel_aceite",
-    "hidraulico_enfriador_termotasto",
-    "hidraulico_indicador_filtro",
-    "hidraulico_mangueras_tubos_sin_fugas",
-    "superficie_nivel_deposito_grasa",
-    "superficie_puntos_lubricacion",
-    "superficie_empaquetaduras_conexion",
-    "mangueras_interna_no_deshilachadas",
-    "mangueras_acoples_buen_estado",
-    "mangueras_externa_no_deshilachado",
-    "electrico_interruptores_buen_estado",
-    "electrico_luces_funcionan",
-    "electrico_cubiertas_proteccion_buenas",
-    "electrico_cordon_mando_buen_estado",
-    "electrico_interruptores_emergencia_funcionan",
-    "electrico_conexiones_sin_oxido",
-    "electrico_paros_emergencia",
-    "electrico_aisladores_cables_buenos",
-    "tuberia_abrazaderas_codos_ajustadas",
-    "tuberia_bujia_tallo_anclados",
-    "tuberia_abrazaderas_descarga_ajustadas",
-    "tuberia_espesor",
-    "tuberia_vertical_tallo_recta",
-    "tuberia_desplazamiento_seguro"
+    "horometro_motor"
   ];
 
   const faltantes = camposRequeridos.filter(

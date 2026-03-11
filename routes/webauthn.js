@@ -49,7 +49,20 @@ const rpName = process.env.WEBAUTHN_RPNAME;
 const origin = process.env.WEBAUTHN_ORIGIN;
 
 // Almacenamiento temporal de challenge por usuario
+// NOTA: Este Map vive en memoria. En Render.com free tier, el servidor se duerme
+// y al despertar se vacía, lo que rompe flujos WebAuthn en curso. Es una limitación
+// conocida del free tier; la solución definitiva es persistir challenges en BD.
 const challengeMap = new Map();
+
+// Limpiar challenges con más de 5 minutos de antigüedad para evitar memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, data] of challengeMap.entries()) {
+    if (now - data.createdAt > 5 * 60 * 1000) {
+      challengeMap.delete(userId);
+    }
+  }
+}, 10 * 60 * 1000);
 
 // 1. Generar opciones de registro
 router.post("/register/options", async (req, res) => {
@@ -94,7 +107,7 @@ router.post("/register/options", async (req, res) => {
     console.error('[WebAuthn] Error generando registrationOptions:', err);
     return res.status(500).json({ error: 'Error generando registrationOptions', detalle: err.message });
   }
-  challengeMap.set(numero_identificacion, registrationOptions.challenge);
+  challengeMap.set(numero_identificacion, { challenge: registrationOptions.challenge, createdAt: Date.now() });
   res.json(registrationOptions);
 });
 
@@ -116,7 +129,8 @@ router.post("/register/verify", async (req, res) => {
   console.log('[WebAuthn] sanitizedResponse:', sanitizedResponse);
   
   const db = global.db;
-  const expectedChallenge = challengeMap.get(numero_identificacion);
+  const challengeEntry = challengeMap.get(numero_identificacion);
+  const expectedChallenge = challengeEntry ? challengeEntry.challenge : undefined;
   if (!expectedChallenge) {
     console.log('[WebAuthn] /register/verify error: No hay challenge para este usuario');
     return res.status(400).json({ error: "No hay challenge para este usuario" });
@@ -187,7 +201,7 @@ router.post("/authenticate/options", async (req, res) => {
     }))
   });
   console.log('[WebAuthn] authenticationOptions generadas:', util.inspect(authenticationOptions, { depth: null, colors: true }));
-  challengeMap.set(numero_identificacion, authenticationOptions.challenge);
+  challengeMap.set(numero_identificacion, { challenge: authenticationOptions.challenge, createdAt: Date.now() });
   res.json(authenticationOptions);
 });
 
@@ -202,7 +216,8 @@ router.post("/authenticate/verify", async (req, res) => {
   if (!credenciales.length) {
     return res.status(404).json({ error: "No hay credenciales para este usuario" });
   }
-  const expectedChallenge = challengeMap.get(numero_identificacion);
+  const authChallengeEntry = challengeMap.get(numero_identificacion);
+  const expectedChallenge = authChallengeEntry ? authChallengeEntry.challenge : undefined;
   if (!expectedChallenge) {
     return res.status(400).json({ error: "No hay challenge para este usuario" });
   }

@@ -4,6 +4,26 @@ const router = express.Router();
 
 const SALT_ROUNDS = 10;
 
+// Rate limiter en memoria para /auth/pin/verify (sin dependencias externas)
+const pinLoginAttempts = new Map();
+
+function checkPinRateLimit(req, res) {
+  const ipKey = req.ip;
+  const now = Date.now();
+  const attempt = pinLoginAttempts.get(ipKey) || { count: 0, resetAt: now + 15 * 60 * 1000 };
+  if (now > attempt.resetAt) {
+    attempt.count = 0;
+    attempt.resetAt = now + 15 * 60 * 1000;
+  }
+  if (attempt.count >= 10) {
+    res.status(429).json({ error: 'Demasiados intentos. Espera 15 minutos.' });
+    return false;
+  }
+  attempt.count++;
+  pinLoginAttempts.set(ipKey, attempt);
+  return true;
+}
+
 // GET /auth/pin/status?numero_identificacion=xxx
 // Devuelve si el usuario tiene PIN habilitado y si ya lo configuró
 router.get("/status", async (req, res) => {
@@ -72,6 +92,10 @@ router.post("/verify", async (req, res) => {
   if (!numero_identificacion || !pin) {
     return res.status(400).json({ error: "Faltan datos" });
   }
+
+  // Rate limiting: máximo 10 intentos por IP cada 15 minutos
+  if (!checkPinRateLimit(req, res)) return;
+
   try {
     const db = global.db;
     const q = await db.query(
@@ -92,6 +116,8 @@ router.post("/verify", async (req, res) => {
     if (!match) {
       return res.status(401).json({ success: false, error: "PIN incorrecto" });
     }
+    // Limpiar conteo de intentos al autenticarse con éxito
+    pinLoginAttempts.delete(req.ip);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

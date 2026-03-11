@@ -16,6 +16,8 @@ import inspeccionEpccRouter from "./routes/gruaman/inspeccion_epcc.js";
 import inspeccionIzajeRouter from "./routes/gruaman/inspeccion_izaje.js";
 import inventariosObraRouter from "./routes/bomberman/inventariosobra.js";
 import inspeccionEpccBombermanRouter from "./routes/bomberman/inspeccion_epcc_bomberman.js";
+import herramientasMantenimientoRouter from "./routes/bomberman/herramientas_mantenimiento.js";
+import kitLimpiezaRouter from "./routes/bomberman/kit_limpieza.js";
 import chequeoElevadorRouter from "./routes/gruaman/chequeo_elevador.js";
 import fetch from 'node-fetch'; // Si usas Node < 18, instala: npm install node-fetch
 import chequeoTorregruasAdminRouter from "./routes/adminsitrador_gruaman/chequeo_torregruas_admin.js";
@@ -25,9 +27,12 @@ import planillaBombeoAdminRouter from "./routes/administrador_bomberman/planilla
 import inventariosObraAdminRouter from "./routes/administrador_bomberman/inventarios_obra_admin.js";
 import inspeccionEpccBombermanAdminRouter from "./routes/administrador_bomberman/inspeccion_epcc_bomberman_admin.js";
 import checklistAdminRouter from "./routes/administrador_bomberman/checklist_admin.js";
+import herramientasMantenimientoAdminRouter from "./routes/administrador_bomberman/herramientas_mantenimiento_admin.js";
+import kitLimpiezaAdminRouter from "./routes/administrador_bomberman/kit_limpieza_admin.js";
 import adminUsuariosRouter from "./routes/administrador/admin_usuarios.js";
 import adminObrasRouter from "./routes/administrador/admin_obras.js";
-import adminHorasExtraRouter from './routes/administrador/admin_horas_extra.js';
+// adminHorasExtraRouter se importa dinámicamente dentro del IIFE async para
+// garantizar que global.db esté disponible. Ver línea ~536.
 import webauthnRouter from './routes/webauthn.js';
 import signioRouter from './routes/signio.js';
 import registrosDiariosRouter from './routes/administrador/registros_diarios.js';
@@ -70,7 +75,21 @@ async function sendPushNotification(subscription, payload) {
 const { Pool } = pkg;
 const app = express();
 
-app.use(cors());
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'https://gruaman-bomberman-front.onrender.com',
+  'https://gruaman-bomberman-front.onrender.com',
+];
+app.use(cors({
+  origin: (origin, callback) => {
+    // Permitir requests sin origen (apps móviles, curl, Postman)
+    if (!origin) return callback(null, true);
+    // Permitir cualquier localhost o 127.0.0.1 en desarrollo
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true
+}));
 app.use(express.json());
 app.use("/bomberman/planillabombeo", planillaBombeoRouter);
 app.use("/bomberman/checklist", checklistRouter);
@@ -144,17 +163,22 @@ global.db = pool;
   // --- NUEVA TABLA horas_jornada ---
   await pool.query(`
     CREATE TABLE IF NOT EXISTS horas_jornada (
+      id SERIAL PRIMARY KEY,
       nombre_cliente VARCHAR(100) NOT NULL,
       nombre_proyecto VARCHAR(150) NOT NULL,
       fecha_servicio DATE NOT NULL,
       nombre_operador VARCHAR(100) NOT NULL,
-      cargo VARCHAR(100) NOT NULL,
+      cargo VARCHAR(100),
       empresa_id INT REFERENCES empresas(id),
       hora_ingreso TIME NOT NULL,
-      hora_salida TIME NOT NULL,
+      hora_salida TIME,
       minutos_almuerzo INT CHECK (minutos_almuerzo >= 1 AND minutos_almuerzo <= 60)
     );
   `);
+  // Migraciones seguras para tablas que ya existen en producción con esquema antiguo
+  await pool.query(`ALTER TABLE horas_jornada ADD COLUMN IF NOT EXISTS id SERIAL`).catch(() => {});
+  await pool.query(`ALTER TABLE horas_jornada ALTER COLUMN hora_salida DROP NOT NULL`).catch(() => {});
+  await pool.query(`ALTER TABLE horas_jornada ALTER COLUMN cargo DROP NOT NULL`).catch(() => {});
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS planilla_bombeo (
@@ -492,19 +516,7 @@ global.db = pool;
     );
   `);
 
-  // --- NUEVA TABLA PARA HORAS DE JORNADA ---
-  await pool.query(`
-  CREATE TABLE IF NOT EXISTS horas_jornada (
-  nombre_cliente VARCHAR(100) NOT NULL,
-  nombre_proyecto VARCHAR(150) NOT NULL,
-  fecha_servicio DATE NOT NULL,
-  nombre_operador VARCHAR(100) NOT NULL,
-  cargo VARCHAR(100) NOT NULL,
-  empresa_id INT REFERENCES empresas(id),
-  hora_ingreso TIME NOT NULL,
-  hora_salida TIME NOT NULL,
-  minutos_almuerzo INT CHECK (minutos_almuerzo >= 1 AND minutos_almuerzo <= 60)
-);`);
+  // --- NUEVA TABLA PARA HORAS DE JORNADA (definición duplicada; la tabla ya se crea arriba) ---
 // Endpoint para enviar una notificación push manualmente (pruebas)
 app.post("/push/test", async (req, res) => {
   const { numero_identificacion, title, body } = req.body;
@@ -549,10 +561,19 @@ app.post("/push/test", async (req, res) => {
   // ...puedes agregar aquí otros routers que dependan de global.db si es necesario...
 })();
 
-// Devuelve los nombres de todos los trabajadores
+// Devuelve los nombres de todos los trabajadores, filtrado por empresa_id si se proporciona
 app.get("/nombres_trabajadores", async (req, res) => {
   try {
-    const result = await pool.query(`SELECT nombre FROM trabajadores`);
+    const { empresa_id } = req.query;
+    let result;
+    if (empresa_id) {
+      result = await pool.query(
+        `SELECT nombre FROM trabajadores WHERE empresa_id = $1 AND activo = true`,
+        [empresa_id]
+      );
+    } else {
+      result = await pool.query(`SELECT nombre FROM trabajadores WHERE activo = true`);
+    }
     const nombres = result.rows.map(row => row.nombre);
     res.json({ nombres });
   } catch (error) {
@@ -735,11 +756,13 @@ app.use("/inventarios_obra_admin", inventariosObraAdminRouter);
 app.use("/inspeccion_epcc_bomberman_admin", inspeccionEpccBombermanAdminRouter);
 // Router administrativo para checklist (búsqueda / descargas)
 app.use("/checklist_admin", checklistAdminRouter);
+app.use("/herramientas_mantenimiento_admin", herramientasMantenimientoAdminRouter);
+app.use("/kit_limpieza_admin", kitLimpiezaAdminRouter);
 // Router para administración de usuarios
 app.use("/admin_usuarios", adminUsuariosRouter);
 // Router para administración de obras
 app.use("/admin_obras", adminObrasRouter);
-app.use("/administrador/admin_horas_extra", adminHorasExtraRouter);
+// Nota: /administrador/admin_horas_extra ya se registra dentro del IIFE async (línea ~537)
 app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
 app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
 app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
@@ -748,37 +771,67 @@ app.use("/gruaman/inspeccion_izaje", inspeccionIzajeRouter);
 app.use("/gruaman/chequeo_elevador", chequeoElevadorRouter);
 app.use("/bomberman/inventariosobra", inventariosObraRouter);
 app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
+app.use("/bomberman/herramientas_mantenimiento", herramientasMantenimientoRouter);
+app.use("/bomberman/kit_limpieza", kitLimpiezaRouter);
 app.use("/sst/pqr", pqrRouter);
 
-// IMPORTA Y USA EL ROUTER DESPUÉS DE global.db Y DESPUÉS DE LA CREACIÓN DE TABLAS:
-const { default: horaJornadaRouter } = await import("./routes/compartido/hora_llegada_salida.js");
-app.use("/horas_jornada", horaJornadaRouter);
+// Nota: /horas_jornada ya se registra dentro del IIFE async (línea ~539) para
+// garantizar que global.db esté disponible antes de montar el router.
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
   console.log(`✅ API corriendo en http://localhost:${PORT} (PostgreSQL conectado)`)
 );
 
-// Devuelve los datos básicos de todos los trabajadores
+// Devuelve los datos básicos de todos los trabajadores, filtrado por empresa_id si se proporciona
 app.get("/datos_basicos", async (req, res) => {
   try {
-    const result = await pool.query(`SELECT nombre, empresa_id, numero_identificacion, activo, cargo FROM trabajadores`);
+    const { empresa_id } = req.query;
+    let result;
+    if (empresa_id) {
+      result = await pool.query(
+        `SELECT nombre, empresa_id, numero_identificacion, activo, cargo FROM trabajadores WHERE empresa_id = $1`,
+        [empresa_id]
+      );
+    } else {
+      result = await pool.query(
+        `SELECT nombre, empresa_id, numero_identificacion, activo, cargo FROM trabajadores`
+      );
+    }
     res.json({ datos: result.rows });
   } catch (error) {
     res.status(500).json({ error: "Error al obtener los datos básicos de trabajadores" });
   }
 });
 
+// Rate limiter en memoria para /admin/login (sin dependencias externas)
+const adminLoginAttempts = new Map();
+
 // Endpoint de login de administrador
 app.post("/admin/login", async (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: "Falta la contraseña" });
 
+  // Rate limiting: máximo 10 intentos por IP cada 15 minutos
+  const ipKey = req.ip;
+  const now = Date.now();
+  const adminAttempt = adminLoginAttempts.get(ipKey) || { count: 0, resetAt: now + 15 * 60 * 1000 };
+  if (now > adminAttempt.resetAt) {
+    adminAttempt.count = 0;
+    adminAttempt.resetAt = now + 15 * 60 * 1000;
+  }
+  if (adminAttempt.count >= 10) {
+    return res.status(429).json({ error: 'Demasiados intentos. Espera 15 minutos.' });
+  }
+  adminAttempt.count++;
+  adminLoginAttempts.set(ipKey, adminAttempt);
+
   try {
-    const result = await pool.query("SELECT * FROM admin_passwords");
+    const result = await pool.query("SELECT id, password_hash, rol FROM admin_passwords");
     for (const row of result.rows) {
       const match = await bcrypt.compare(password, row.password_hash);
       if (match) {
+        adminLoginAttempts.delete(ipKey);
         return res.json({ success: true, rol: row.rol });
       }
     }

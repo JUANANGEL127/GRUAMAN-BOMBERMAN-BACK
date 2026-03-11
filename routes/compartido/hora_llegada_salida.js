@@ -5,15 +5,14 @@ import { enviarDocumentoAFirmar } from '../signio.js';
 import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = express.Router();
 
-// Usa global.db para compatibilidad con index.js
-let db;
-try {
-  db = global.db;
-  if (!db) throw new Error("global.db no está definido");
-} catch (e) {
-  console.error("Error: global.db no está definido. Asegúrate de importar este router después de inicializar la base de datos en index.js.");
-  throw e;
-}
+// Accede a global.db dentro de cada handler para garantizar que la DB
+// ya esté inicializada en el momento de usar el router (no al importar el módulo).
+const db = {
+  query: (...args) => {
+    if (!global.db) throw new Error("global.db no está disponible");
+    return global.db.query(...args);
+  }
+};
 
 const CRON_TIMEZONE = 'America/Bogota';
 
@@ -40,8 +39,8 @@ async function completarSalidasParaFecha(fecha) {
   const { rows } = await db.query(
     `SELECT DISTINCT ON (h.nombre_operador) h.id, h.nombre_operador, h.hora_ingreso, h.fecha_servicio
      FROM horas_jornada h
-     WHERE CAST(h.fecha_servicio AS date) = $1::date
-       AND (h.hora_salida IS NULL OR h.hora_salida::text = '')
+     WHERE h.fecha_servicio = $1::date
+       AND h.hora_salida IS NULL
      ORDER BY h.nombre_operador, h.hora_ingreso ASC`,
     [fechaStr]
   );
@@ -150,8 +149,9 @@ router.post("/ingreso", async (req, res) => {
     hora_ingreso
   } = req.body || {};
 
-  if (!nombre_cliente || !nombre_proyecto || !fecha_servicio || !nombre_operador || !empresa_id || !hora_ingreso) {
-    return res.status(400).json({ error: "Faltan parámetros obligatorios: nombre_cliente, nombre_proyecto, fecha_servicio, nombre_operador, empresa_id, hora_ingreso" });
+  // nombre_cliente es opcional: puede llegar vacío si la carga de obras falló en el front
+  if (!nombre_proyecto || !fecha_servicio || !nombre_operador || !empresa_id || !hora_ingreso) {
+    return res.status(400).json({ error: "Faltan parámetros obligatorios: nombre_proyecto, fecha_servicio, nombre_operador, empresa_id, hora_ingreso" });
   }
 
   try {
@@ -160,10 +160,10 @@ router.post("/ingreso", async (req, res) => {
 
     // Verificar si hay un registro abierto (sin hora de salida) para ese operador y fecha
     const registroAbierto = await db.query(
-      `SELECT id, hora_ingreso FROM horas_jornada 
-       WHERE nombre_operador = $1 
-       AND CAST(fecha_servicio AS date) = $2::date 
-       AND (hora_salida IS NULL OR hora_salida::text = '')`,
+      `SELECT id, hora_ingreso FROM horas_jornada
+       WHERE nombre_operador = $1
+       AND fecha_servicio = $2::date
+       AND hora_salida IS NULL`,
       [nombre_operador, fechaDia]
     );
 
@@ -216,17 +216,23 @@ router.post("/salida", async (req, res) => {
 
     // Buscar el último registro sin hora_salida para ese operador y fecha
     const registroPendiente = await db.query(
-      `SELECT id, hora_ingreso FROM horas_jornada 
-       WHERE nombre_operador = $1 
-       AND CAST(fecha_servicio AS date) = $2::date 
-       AND (hora_salida IS NULL OR hora_salida::text = '')
-       ORDER BY hora_ingreso DESC 
+      `SELECT id, hora_ingreso FROM horas_jornada
+       WHERE nombre_operador = $1
+       AND fecha_servicio = $2::date
+       AND hora_salida IS NULL
+       ORDER BY hora_ingreso DESC
        LIMIT 1`,
       [nombre_operador, fechaDia]
     );
-    
+
     if (registroPendiente.rows.length === 0) {
-      return res.status(404).json({ error: "No existe registro de ingreso pendiente (sin salida) para ese operador y fecha" });
+      // Log para diagnóstico: mostrar cuántos registros existen para ese operador en esa fecha
+      const debug = await db.query(
+        `SELECT id, hora_ingreso, hora_salida FROM horas_jornada WHERE nombre_operador = $1 AND fecha_servicio = $2::date ORDER BY hora_ingreso ASC`,
+        [nombre_operador, fechaDia]
+      );
+      console.warn(`[salida] No se encontró registro abierto. Operador: "${nombre_operador}", Fecha: "${fechaDia}". Registros del día: ${JSON.stringify(debug.rows)}`);
+      return res.status(404).json({ error: "No existe un registro de entrada para guardar la hora de salida", fecha_buscada: fechaDia, operador: nombre_operador });
     }
 
     const registroId = registroPendiente.rows[0].id;

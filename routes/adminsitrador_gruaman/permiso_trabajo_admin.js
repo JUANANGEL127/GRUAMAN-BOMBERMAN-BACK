@@ -3,36 +3,8 @@ import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
 import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
+import { buildWhere } from '../../helpers/queryBuilder.js';
 const router = express.Router();
-
-// Helper: construye WHERE dinámico y values parametrizados
-function buildWhere(params, allowedFields) {
-  const clauses = [];
-  const values = [];
-  let idx = 1;
-  for (const key of Object.keys(params)) {
-    const val = params[key];
-    if ((val === undefined || val === '') || !allowedFields.includes(key)) continue;
-    if (key === 'fecha_from') {
-      // comparar solo la parte date para evitar problemas TZ
-      clauses.push(`CAST(fecha_servicio AS date) >= $${idx++}`);
-      values.push(val);
-    } else if (key === 'fecha_to') {
-      clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`);
-      values.push(val);
-    } else if (key === 'fecha') {
-      clauses.push(`CAST(fecha_servicio AS date) = $${idx++}`);
-      values.push(val);
-    } else {
-      // busqueda case-insensitive parcial
-      clauses.push(`${key} ILIKE $${idx++}`);
-      values.push(`%${val}%`);
-    }
-  }
-  return { where: clauses.length ? 'WHERE ' + clauses.join(' AND ') : '', values };
-}
-
-// usar helpers compartidos para manejo de fechas (evita shift TZ)
 
 // GET /permiso_trabajo -> lista paginada
 router.get('/permiso_trabajo', async (req, res) => {
@@ -277,29 +249,27 @@ router.post('/descargar', async (req, res) => {
       values.push(endDate);
     }
 
+    // Ejecutar la consulta a la BD (necesaria para todos los formatos)
+    const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
+    const q = await pool.query(
+      `SELECT * FROM permiso_trabajo ${where} ORDER BY id DESC LIMIT $${idx}`,
+      [...values, Math.min(50000, parseInt(limit) || 10000)]
+    );
+
     // Si piden Excel -> generar XLSX y devolver (sin generar/enviar PDF automáticamente)
     if (formato === 'excel') {
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Permisos de Trabajo');
 
-      // Lista de columnas/keys que queremos volcar al Excel (puedes ajustar el orden)
-      const keys = [
-        'id',
-        'nombre_cliente', 'nombre_proyecto', 'fecha_servicio',
-        'nombre_operador', 'cargo',
-        'trabajo_rutinario', 'tarea_en_alturas', 'altura_inicial', 'altura_final',
-        'herramientas_seleccionadas', 'herramientas_otros',
-        'certificado_alturas', 'seguridad_social_arl', 'casco_tipo1', 'gafas_seguridad',
-        'proteccion_auditiva', 'proteccion_respiratoria', 'guantes_seguridad', 'botas_punta_acero',
-        'ropa_reflectiva', 'arnes_cuerpo_entero', 'arnes_cuerpo_entero_dielectico', 'mosqueton',
-        'arrestador_caidas', 'eslinga_absorbedor', 'eslinga_posicionamiento', 'linea_vida',
-        'eslinga_doble', 'verificacion_anclaje', 'procedimiento_charla', 'medidas_colectivas_prevencion',
-        'epp_epcc_buen_estado', 'equipos_herramienta_buen_estado', 'inspeccion_sistema', 'plan_emergencia_rescate',
-        'medidas_caida', 'kit_rescate', 'permisos', 'condiciones_atmosfericas', 'distancia_vertical_caida',
-        'otro_precausiones', 'vertical_fija', 'vertical_portatil', 'andamio_multidireccional', 'andamio_colgante',
-        'elevador_carga', 'canasta', 'ascensores', 'otro_equipos',
-        'observaciones', 'motivo_suspension', 'nombre_suspende', 'nombre_responsable', 'nombre_coordinador'
-      ];
+      // Si no hay filas, devolver un libro vacío con una hoja y salir
+      if (!q.rows || q.rows.length === 0) {
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename=permisos_trabajo.xlsx');
+        await workbook.xlsx.write(res);
+        return res.end();
+      }
+
+      const keys = Object.keys(q.rows[0]);
 
       ws.addTable({
         name: 'TablaPermisosTrabajo',
@@ -308,9 +278,13 @@ router.post('/descargar', async (req, res) => {
         totalsRow: false,
         style: { theme: 'TableStyleMedium2', showRowStripes: true },
         columns: keys.map(k => ({ name: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), filterButton: true })),
-        rows: q.rows.map(r => keys.map(k =>
-          k === 'fecha_servicio' ? (r[k] ? formatDateOnly(r[k]) : '') : (r[k] !== undefined && r[k] !== null ? r[k] : '')
-        ))
+        rows: q.rows.map(r => keys.map(k => {
+          let val = r[k];
+          if (k === 'fecha_servicio') return val ? formatDateOnly(val) : '';
+          if (val === null || val === undefined) return '';
+          if (typeof val === 'object') { try { return JSON.stringify(val); } catch(e) { return String(val); } }
+          return val;
+        }))
       });
       keys.forEach((k, i) => {
         ws.getColumn(i + 1).width = Math.min(50, Math.max(12, k.replace(/_/g, ' ').length + 4));

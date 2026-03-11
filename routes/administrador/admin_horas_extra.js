@@ -4,35 +4,8 @@ import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
 import archiver from "archiver";
 import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
+import { buildWhere } from '../../helpers/queryBuilder.js';
 const router = express.Router();
-
-// Helper para construir WHERE dinámico (usa CAST(...) AS date para fecha)
-function buildWhere(params, allowedFields = []) {
-  const clauses = [];
-  const values = [];
-  let idx = 1;
-  for (const key of Object.keys(params || {})) {
-    const val = params[key];
-    if ((val === undefined || val === "") || !allowedFields.includes(key)) continue;
-    if (key === 'fecha_from') {
-      clauses.push(`CAST(fecha_servicio AS date) >= $${idx++}`);
-      values.push(formatDateOnly(val));
-    } else if (key === 'fecha_to') {
-      clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`);
-      values.push(formatDateOnly(val));
-    } else if (key === 'fecha') {
-      clauses.push(`CAST(fecha_servicio AS date) = $${idx++}`);
-      values.push(formatDateOnly(val));
-    } else if (key === 'empresa_id') {
-      clauses.push(`empresa_id = $${idx++}`);
-      values.push(Number(val));
-    } else {
-      clauses.push(`${key} ILIKE $${idx++}`);
-      values.push(`%${val}%`);
-    }
-  }
-  return { where: clauses.length ? 'WHERE ' + clauses.join(' AND ') : '', values };
-}
 
 // Festivos fijos (MM-DD)
 const FESTIVOS_FIJOS = ["-01-01","-05-01","-07-20","-12-25"];
@@ -322,6 +295,22 @@ async function generarPDFResumenMes(resumenUsuarios, totalMes, nombreMes, anio) 
 
 // --- extraigo handlers para poder registrar alias absolutos ---
 
+// Helper: construye mapa nombre_obra → nombre departamento (sede)
+async function buildSedeMap(pool) {
+  const sedeMap = {};
+  try {
+    const q = await pool.query(
+      `SELECT o.nombre_obra, dep.nombre AS sede
+       FROM obras o
+       LEFT JOIN departamentos dep ON dep.id = o.departamento_id`
+    );
+    for (const row of q.rows) {
+      if (row.nombre_obra) sedeMap[row.nombre_obra] = row.sede || '';
+    }
+  } catch (_) { /* si las tablas no existen, se devuelve mapa vacío */ }
+  return sedeMap;
+}
+
 // handler para POST /buscar
 async function handleBuscar(req, res) {
   try {
@@ -360,13 +349,16 @@ async function handleBuscar(req, res) {
       [...values, Math.min(10000, parseInt(limit) || 200), parseInt(offset) || 0]
     );
 
+    const sedeMap = await buildSedeMap(pool);
+
     const rows = q.rows.map(r => {
       const fecha = formatDateOnly(r.fecha_servicio);
       const calculos = (r.hora_ingreso && r.hora_salida && (r.minutos_almuerzo !== undefined))
         ? calcularHoras({ hora_ingreso: r.hora_ingreso, hora_salida: r.hora_salida, minutos_almuerzo: r.minutos_almuerzo, fecha })
         : { horas_trabajadas: 0, extra_diurna: 0, extra_nocturna: 0, extra_festiva: 0, total_extras:0, festivo:false, dia_semana: null };
       const total_horas = +( (calculos.horas_trabajadas || 0) ).toFixed(2);
-      return { ...r, fecha_servicio: fecha, ...calculos, total_horas };
+      const sede = sedeMap[r.nombre_proyecto] || '';
+      return { ...r, fecha_servicio: fecha, sede, ...calculos, total_horas };
     });
 
     return res.json({ success:true, count: total, limit: parseInt(limit,10)||0, offset: parseInt(offset,10)||0, rows });
@@ -578,6 +570,8 @@ async function handleDescargar(req, res) {
       [...values, Math.min(50000, parseInt(limit,10)||50000)]
     );
 
+    const sedeMap = await buildSedeMap(pool);
+
     const rows = [];
     const idsVistos = new Set();
     // Objeto para agrupar por MES y luego por usuario
@@ -592,7 +586,8 @@ async function handleDescargar(req, res) {
         ? calcularHoras({ hora_ingreso: r.hora_ingreso, hora_salida: r.hora_salida, minutos_almuerzo: r.minutos_almuerzo, fecha })
         : { horas_trabajadas: 0, extra_diurna: 0, extra_nocturna: 0, extra_festiva: 0, total_extras:0, festivo:false, dia_semana:null };
       const total_horas = +(calculos.horas_trabajadas || 0).toFixed(2);
-      rows.push({ ...r, fecha_servicio: fecha, ...calculos, total_horas });
+      const sede = sedeMap[r.nombre_proyecto] || '';
+      rows.push({ ...r, fecha_servicio: fecha, sede, ...calculos, total_horas });
 
       // Extraer mes-año de la fecha (ej: "2026-02")
       const mesAnio = fecha ? fecha.slice(0, 7) : 'Sin fecha';
@@ -611,6 +606,7 @@ async function handleDescargar(req, res) {
         resumenPorMes[mesAnio].usuarios[operador] = {
           nombre_operador: operador,
           cargo: r.cargo || '',
+          sede: sedeMap[r.nombre_proyecto] || '',
           total_dias_trabajados: 0,
           total_horas_trabajadas: 0,
           total_extra_diurna: 0,
@@ -661,12 +657,12 @@ async function handleDescargar(req, res) {
         const wsResumen = workbook.addWorksheet(nombreHoja);
         
         // Título y período
-        wsResumen.mergeCells('A1:H1');
+        wsResumen.mergeCells('A1:I1');
         wsResumen.getCell('A1').value = `RESUMEN DE HORAS - ${nombreMes.toUpperCase()} ${anio}`;
         wsResumen.getCell('A1').font = { bold: true, size: 14 };
         wsResumen.getCell('A1').alignment = { horizontal: 'center' };
         
-        const colNames = ['Nombre', 'Cargo', 'Días Trabajados', 'Horas Trabajadas', 'Extra Diurna', 'Extra Nocturna', 'Extra Festiva', 'Total Extras'];
+        const colNames = ['Nombre', 'Cargo', 'Sede', 'Días Trabajados', 'Horas Trabajadas', 'Extra Diurna', 'Extra Nocturna', 'Extra Festiva', 'Total Extras'];
         wsResumen.addTable({
           name: `TablaResumen_${mesAnio.replace('-', '_')}`,
           ref: 'A3',
@@ -675,7 +671,7 @@ async function handleDescargar(req, res) {
           style: { theme: 'TableStyleMedium2', showRowStripes: true },
           columns: colNames.map(n => ({ name: n, filterButton: true })),
           rows: resumenUsuarios.map(u => [
-            u.nombre_operador, u.cargo, u.total_dias_trabajados,
+            u.nombre_operador, u.cargo, u.sede, u.total_dias_trabajados,
             u.total_horas_trabajadas, u.total_extra_diurna,
             u.total_extra_nocturna, u.total_extra_festiva, u.total_horas_extras
           ])
@@ -684,7 +680,7 @@ async function handleDescargar(req, res) {
         // Fila de totales debajo de la tabla
         const totalRow = 4 + resumenUsuarios.length;
         wsResumen.getRow(totalRow).values = [
-          'TOTAL MES', '',
+          'TOTAL MES', '', '',
           resumenUsuarios.reduce((acc, u) => acc + u.total_dias_trabajados, 0),
           +totalMes.horas_trabajadas.toFixed(2),
           +totalMes.extra_diurna.toFixed(2),
@@ -696,7 +692,7 @@ async function handleDescargar(req, res) {
         wsResumen.getRow(totalRow).eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'C8E6C9' } }; });
 
         // Ajustar anchos
-        [30, 20, 18, 18, 15, 15, 15, 15].forEach((w, i) => { wsResumen.getColumn(i + 1).width = w; });
+        [30, 20, 20, 18, 18, 15, 15, 15, 15].forEach((w, i) => { wsResumen.getColumn(i + 1).width = w; });
       }
 
       // Última hoja: Registros Detallados

@@ -6,35 +6,9 @@ import path from 'path';
 import libre from 'libreoffice-convert';
 import dotenv from 'dotenv';
 import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
+import { buildWhere } from '../../helpers/queryBuilder.js';
 dotenv.config();
 const router = express.Router();
-
-// usar helpers compartidos para manejo de fechas (evita shift TZ)
-
-// Helper para construir WHERE dinámico (usa CAST(...) AS date para fecha)
-function buildWhere(params, allowedFields) {
-  const clauses = [];
-  const values = [];
-  let idx = 1;
-  for (const key of Object.keys(params)) {
-    const val = params[key];
-    if ((val === undefined || val === '') || !allowedFields.includes(key)) continue;
-    if (key === 'fecha_from') {
-      clauses.push(`CAST(fecha_servicio AS date) >= $${idx++}`);
-      values.push(val);
-    } else if (key === 'fecha_to') {
-      clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`);
-      values.push(val);
-    } else if (key === 'fecha') {
-      clauses.push(`CAST(fecha_servicio AS date) = $${idx++}`);
-      values.push(val);
-    } else {
-      clauses.push(`${key} ILIKE $${idx++}`);
-      values.push(`%${val}%`);
-    }
-  }
-  return { where: clauses.length ? 'WHERE ' + clauses.join(' AND ') : '', values };
-}
 
 // GET /inventarios_obra/search -> búsqueda por query params (opcional)
 router.get('/inventarios_obra/search', async (req, res) => {
