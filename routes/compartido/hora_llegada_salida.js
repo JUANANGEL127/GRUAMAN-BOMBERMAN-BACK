@@ -146,7 +146,8 @@ router.post("/ingreso", async (req, res) => {
     nombre_operador,
     cargo,
     empresa_id,
-    hora_ingreso
+    hora_ingreso,
+    minutos_almuerzo
   } = req.body || {};
 
   // nombre_cliente es opcional: puede llegar vacío si la carga de obras falló en el front
@@ -180,8 +181,8 @@ router.post("/ingreso", async (req, res) => {
     // Crear nuevo registro de ingreso
     const result = await db.query(
       `INSERT INTO horas_jornada (
-        nombre_cliente, nombre_proyecto, fecha_servicio, nombre_operador, cargo, empresa_id, hora_ingreso
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        nombre_cliente, nombre_proyecto, fecha_servicio, nombre_operador, cargo, empresa_id, hora_ingreso, minutos_almuerzo
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING id`,
       [
         nombre_cliente,
@@ -190,7 +191,8 @@ router.post("/ingreso", async (req, res) => {
         nombre_operador,
         cargo || null,
         empresa_id,
-        hora_ingreso
+        hora_ingreso,
+        minutos_almuerzo !== undefined && minutos_almuerzo !== null ? Number(minutos_almuerzo) : 60
       ]
     );
 

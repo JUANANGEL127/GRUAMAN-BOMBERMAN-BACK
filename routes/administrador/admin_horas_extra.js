@@ -7,12 +7,32 @@ import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/d
 import { buildWhere } from '../../helpers/queryBuilder.js';
 const router = express.Router();
 
-// Festivos fijos (MM-DD)
-const FESTIVOS_FIJOS = ["-01-01","-05-01","-07-20","-12-25"];
+// Festivos fijos Colombia (MM-DD) - no dependen del año
+const FESTIVOS_FIJOS = [
+  "01-01", // Año Nuevo
+  "05-01", // Día del Trabajo
+  "07-20", // Día de la Independencia
+  "08-07", // Batalla de Boyacá
+  "12-08", // Inmaculada Concepción
+  "12-25", // Navidad
+];
+
+// Festivos móviles por año (Ley Emiliani - se trasladan al lunes siguiente)
+const FESTIVOS_MOVILES_POR_ANIO = {
+  "2024": ["01-08","03-25","03-28","03-29","04-01","05-13","06-03","06-10","07-01","08-19","10-14","11-04","11-11"],
+  "2025": ["01-06","03-24","04-17","04-18","05-01","06-02","06-23","06-30","08-18","10-13","11-03","11-17","12-08"],
+  "2026": ["01-12","04-02","04-03","04-06","05-25","06-15","06-29","07-20","08-17","10-12","11-02","11-16","12-08"],
+  "2027": ["01-11","03-22","04-01","04-02","05-17","06-07","06-14","07-05","08-16","10-18","11-01","11-15","12-08"],
+};
+
 function esFestivo(fechaISO) {
   const dt = DateTime.fromISO(fechaISO, { zone: "America/Bogota" });
-  const mesDia = dt.toFormat("-MM-dd");
-  return dt.weekday === 7 || FESTIVOS_FIJOS.includes(mesDia);
+  if (dt.weekday === 7) return true; // domingo siempre es festivo
+  const mesDia = dt.toFormat("MM-dd");
+  const anio = dt.toFormat("yyyy");
+  if (FESTIVOS_FIJOS.includes(mesDia)) return true;
+  const moviles = FESTIVOS_MOVILES_POR_ANIO[anio] || [];
+  return moviles.includes(mesDia);
 }
 
 // Cálculo de horas y extras (por minuto, zona Colombia)
@@ -31,7 +51,7 @@ function calcularHoras({ hora_ingreso, hora_salida, minutos_almuerzo = 0, fecha 
   let minutosTotales = Math.max(0, Math.round(dtSalida.diff(dtIngreso, "minutes").minutes) - (minutos_almuerzo || 0));
   const horasTrabajadas = +(minutosTotales / 60).toFixed(2);
 
-  const jornadaBaseMin = 8 * 60; // 8 horas base
+  const jornadaBaseMin = 7 * 60 + 20; // 7h20min = 440 minutos base
   const festivo = esFestivo(fecha);
 
   let minutosExtraDiurna = 0;
@@ -49,7 +69,7 @@ function calcularHoras({ hora_ingreso, hora_salida, minutos_almuerzo = 0, fecha 
     let minutosBase = jornadaBaseMin;
     while (resto > 0) {
       const hour = actual.setZone(zone).hour;
-      const isDiurna = hour >= 6 && hour < 21; // 6:00 - 21:00 diurna
+      const isDiurna = hour >= 6 && hour < 19; // 6:00 - 19:00 diurna
       if (minutosBase > 0) {
         minutosNormales++;
         minutosBase--;
@@ -709,6 +729,7 @@ async function handleDescargar(req, res) {
           rows: rows.map(r => keys.map(k => {
             let val = r[k];
             if (k === 'fecha_servicio') return val ? val : '';
+            if (k === 'hora_ingreso' || k === 'hora_salida') return val ? String(val).slice(0, 5) : '';
             if (val === null || val === undefined) return '';
             if (typeof val === 'object') { try { return JSON.stringify(val); } catch(e) { return String(val); } }
             return val;
