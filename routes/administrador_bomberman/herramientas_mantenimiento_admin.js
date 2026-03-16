@@ -115,6 +115,21 @@ async function generarPDF(r) {
   }
 }
 
+async function buildSedeMap(pool) {
+  const sedeMap = {};
+  try {
+    const q = await pool.query(
+      `SELECT o.nombre_obra, dep.nombre AS sede
+       FROM obras o
+       LEFT JOIN departamentos dep ON dep.id = o.departamento_id`
+    );
+    for (const row of q.rows) {
+      if (row.nombre_obra) sedeMap[row.nombre_obra] = row.sede || '';
+    }
+  } catch (_) {}
+  return sedeMap;
+}
+
 // POST /descargar
 router.post('/descargar', async (req, res) => {
   try {
@@ -135,7 +150,9 @@ router.post('/descargar', async (req, res) => {
         await workbook.xlsx.write(res);
         return res.end();
       }
-      const keys = Object.keys(q.rows[0]);
+      const sedeMap = await buildSedeMap(pool);
+      const rowsConSede = q.rows.map(r => ({ ...r, sede: sedeMap[r.nombre_proyecto] || '' }));
+      const keys = Object.keys(rowsConSede[0]);
       ws.addTable({
         name: 'TablaHerramientas',
         ref: 'A1',
@@ -143,7 +160,7 @@ router.post('/descargar', async (req, res) => {
         totalsRow: false,
         style: { theme: 'TableStyleMedium2', showRowStripes: true },
         columns: keys.map(k => ({ name: k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()), filterButton: true })),
-        rows: q.rows.map(r => keys.map(k => {
+        rows: rowsConSede.map(r => keys.map(k => {
           if (k === 'fecha_servicio') return r[k] ? formatDateOnly(r[k]) : '';
           if (r[k] === null || r[k] === undefined) return '';
           return r[k];

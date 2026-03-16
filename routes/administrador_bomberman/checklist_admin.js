@@ -167,6 +167,21 @@ async function generarPDFPorChecklist(r) {
   }
 }
 
+async function buildSedeMap(pool) {
+  const sedeMap = {};
+  try {
+    const q = await pool.query(
+      `SELECT o.nombre_obra, dep.nombre AS sede
+       FROM obras o
+       LEFT JOIN departamentos dep ON dep.id = o.departamento_id`
+    );
+    for (const row of q.rows) {
+      if (row.nombre_obra) sedeMap[row.nombre_obra] = row.sede || '';
+    }
+  } catch (_) {}
+  return sedeMap;
+}
+
 // POST /descargar -> genera XLSX o ZIP de PDFs
 // Acepta tanto /descargar como /checklist_admin/descargar para compatibilidad con el front
 router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
@@ -230,9 +245,14 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
         return res.end();
       }
 
+      const sedeMap = await buildSedeMap(pool);
+      for (const row of q.rows) {
+        row.sede = sedeMap[row.nombre_proyecto] || '';
+      }
+
       // Campos de identificación: siempre visibles
       const camposBasicos = new Set(['id', 'empresa_id', 'signio_transaccion_id', 'fecha_servicio',
-        'nombre_cliente', 'nombre_proyecto', 'nombre_operador', 'bomba_numero', 'horometro_motor', 'observaciones']);
+        'nombre_cliente', 'nombre_proyecto', 'sede', 'nombre_operador', 'bomba_numero', 'horometro_motor', 'observaciones']);
 
       // Campos de texto libre / numéricos / fechas: siempre mostrar su valor
       const noSeleccion = new Set([
