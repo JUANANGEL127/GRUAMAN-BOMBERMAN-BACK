@@ -16,6 +16,9 @@ const db = {
 
 const CRON_TIMEZONE = 'America/Bogota';
 
+// Lock en memoria para evitar race conditions en inserts simultáneos
+const _ingresoEnProceso = new Set();
+
 // Calcula hora_salida = hora_ingreso + 7h20min (7.33 horas)
 function calcularHoraSalida(horaIngreso) {
   const str = String(horaIngreso ?? '').slice(0, 5); // "HH:MM"
@@ -155,6 +158,13 @@ router.post("/ingreso", async (req, res) => {
     return res.status(400).json({ error: "Faltan parámetros obligatorios: nombre_proyecto, fecha_servicio, nombre_operador, empresa_id, hora_ingreso" });
   }
 
+  // Lock en memoria: bloquea requests simultáneos del mismo operador+fecha+hora
+  const lockKey = `${nombre_operador}|${fecha_servicio}|${hora_ingreso}`;
+  if (_ingresoEnProceso.has(lockKey)) {
+    return res.status(409).json({ error: "Registro en proceso, por favor espera un momento." });
+  }
+  _ingresoEnProceso.add(lockKey);
+
   try {
     const fechaDia = normalizeFechaToBogota(fecha_servicio);
     if (!fechaDia) return res.status(400).json({ error: "fecha_servicio inválida" });
@@ -169,7 +179,7 @@ router.post("/ingreso", async (req, res) => {
     );
 
     if (registroAbierto.rows.length > 0) {
-      return res.status(409).json({ 
+      return res.status(409).json({
         error: "Ya existe un registro de ingreso sin hora de salida. Debe registrar la salida antes de un nuevo ingreso.",
         registro_pendiente: {
           id: registroAbierto.rows[0].id,
@@ -200,6 +210,8 @@ router.post("/ingreso", async (req, res) => {
   } catch (err) {
     console.error("Error registrando ingreso:", err);
     return res.status(500).json({ error: "Error registrando ingreso", detalle: err.message });
+  } finally {
+    _ingresoEnProceso.delete(lockKey);
   }
 });
 

@@ -371,15 +371,23 @@ async function handleBuscar(req, res) {
 
     const sedeMap = await buildSedeMap(pool);
 
-    const rows = q.rows.map(r => {
+    const idsVistos = new Set();
+    const clavesVistas = new Set();
+    const rows = q.rows.reduce((acc, r) => {
+      if (r.id != null && idsVistos.has(r.id)) return acc;
+      if (r.id != null) idsVistos.add(r.id);
+      const clave = `${r.nombre_operador}|${r.fecha_servicio}|${r.hora_ingreso}|${r.hora_salida}`;
+      if (clavesVistas.has(clave)) return acc;
+      clavesVistas.add(clave);
       const fecha = formatDateOnly(r.fecha_servicio);
       const calculos = (r.hora_ingreso && r.hora_salida && (r.minutos_almuerzo !== undefined))
         ? calcularHoras({ hora_ingreso: r.hora_ingreso, hora_salida: r.hora_salida, minutos_almuerzo: r.minutos_almuerzo, fecha })
         : { horas_trabajadas: 0, extra_diurna: 0, extra_nocturna: 0, extra_festiva: 0, total_extras:0, festivo:false, dia_semana: null };
       const total_horas = +( (calculos.horas_trabajadas || 0) ).toFixed(2);
       const sede = sedeMap[r.nombre_proyecto] || '';
-      return { ...r, fecha_servicio: fecha, sede, ...calculos, total_horas };
-    });
+      acc.push({ ...r, fecha_servicio: fecha, sede, ...calculos, total_horas });
+      return acc;
+    }, []);
 
     return res.json({ success:true, count: total, limit: parseInt(limit,10)||0, offset: parseInt(offset,10)||0, rows });
   } catch (err) {
@@ -594,6 +602,7 @@ async function handleDescargar(req, res) {
 
     const rows = [];
     const idsVistos = new Set();
+    const clavesVistas = new Set();
     // Objeto para agrupar por MES y luego por usuario
     const resumenPorMes = {};
     const nombresMeses = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -601,6 +610,10 @@ async function handleDescargar(req, res) {
     for (const r of q.rows) {
       if (r.id != null && idsVistos.has(r.id)) continue;
       if (r.id != null) idsVistos.add(r.id);
+      // Deduplicar por contenido: mismo operador + fecha + ingreso + salida
+      const clave = `${r.nombre_operador}|${r.fecha_servicio}|${r.hora_ingreso}|${r.hora_salida}`;
+      if (clavesVistas.has(clave)) continue;
+      clavesVistas.add(clave);
       const fecha = formatDateOnly(r.fecha_servicio);
       const calculos = (r.hora_ingreso && r.hora_salida && (r.minutos_almuerzo !== undefined))
         ? calcularHoras({ hora_ingreso: r.hora_ingreso, hora_salida: r.hora_salida, minutos_almuerzo: r.minutos_almuerzo, fecha })
