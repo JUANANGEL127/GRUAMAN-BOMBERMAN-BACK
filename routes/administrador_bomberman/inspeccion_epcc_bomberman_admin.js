@@ -6,7 +6,13 @@ import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/d
 import { buildWhere } from '../../helpers/queryBuilder.js';
 const router = express.Router();
 
-// GET /inspeccion_epcc_bomberman/search -> búsqueda por query params (opcional)
+/**
+ * GET /inspeccion_epcc_bomberman/search
+ * Búsqueda flexible por query string en registros de inspección EPCC Bomberman.
+ * Asigna automáticamente `fecha_to` a hoy cuando `fecha_from` se proporciona sin fecha de fin.
+ * @query {{ nombre_cliente?, nombre_proyecto?, fecha?, fecha_from?, fecha_to?, nombre_operador?, cargo?, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array }}
+ */
 router.get('/inspeccion_epcc_bomberman/search', async (req, res) => {
   try {
     const pool = global.db;
@@ -24,7 +30,13 @@ router.get('/inspeccion_epcc_bomberman/search', async (req, res) => {
   }
 });
 
-// POST /buscar -> filtros en body JSON
+/**
+ * POST /buscar
+ * Busca registros de inspección EPCC Bomberman usando filtros del body.
+ * Retorna una estructura normalizada con una propiedad `raw` que contiene la fila original de la BD.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array<{ fecha: string, nombre: string, cedula: string|null, empresa: string, obra: string, constructora: string, raw: object }> }}
+ */
 router.post('/buscar', async (req, res) => {
   try {
     const pool = global.db;
@@ -68,7 +80,12 @@ router.post('/buscar', async (req, res) => {
   }
 });
 
-// genera PDF de una inspección en una sola hoja (Buffer)
+/**
+ * Genera un PDF de registro único para una inspección EPCC de bomberman.
+ * Renderiza dinámicamente todos los campos no pertenecientes al encabezado de la fila de BD.
+ * @param {object} r - Fila de BD de inspeccion_epcc_bomberman.
+ * @returns {Promise<Buffer>}
+ */
 async function generarPDFPorInspeccionEPCCBomberman(r) {
   return new Promise((resolve, reject) => {
     try {
@@ -85,7 +102,6 @@ async function generarPDFPorInspeccionEPCCBomberman(r) {
       doc.text(`Operador: ${r.nombre_operador || ''}`);
       doc.text(`Cargo: ${r.cargo || ''}`);
       doc.moveDown();
-      // incluir todos los campos del registro
       Object.entries(r).forEach(([k, v]) => {
         if (v !== undefined && v !== null && String(v).trim() !== '' && !['id','fecha_servicio','nombre_cliente','nombre_proyecto','nombre_operador','cargo'].includes(k)) {
           doc.fontSize(11).text(`${k.replace(/_/g,' ')}: ${v}`);
@@ -96,6 +112,12 @@ async function generarPDFPorInspeccionEPCCBomberman(r) {
   });
 }
 
+/**
+ * Construye un mapa del nombre de obra al nombre de sede (departamento) uniendo obras con departamentos.
+ * Retorna un objeto vacío silenciosamente si la consulta falla.
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<Record<string, string>>}
+ */
 async function buildSedeMap(pool) {
   const sedeMap = {};
   try {
@@ -111,7 +133,15 @@ async function buildSedeMap(pool) {
   return sedeMap;
 }
 
-// POST /descargar -> genera XLSX o ZIP de PDFs
+/**
+ * POST /descargar
+ * Exporta registros filtrados de inspección EPCC bomberman en el formato solicitado.
+ * - `excel`: XLSX con tabla estilizada, deduplicada por id, con columna `sede`.
+ * - `pdf`: archivo ZIP con un PDF por registro.
+ * - Por defecto: CSV con todas las columnas.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, formato?: 'excel'|'pdf'|'csv', limit?: number }}
+ * @returns {Buffer} Adjunto en el formato solicitado.
+ */
 router.post('/descargar', async (req, res) => {
   try {
     const pool = global.db;
@@ -132,7 +162,6 @@ router.post('/descargar', async (req, res) => {
     const q = await pool.query(`SELECT * FROM inspeccion_epcc_bomberman ${where} ORDER BY id DESC LIMIT $${idx}`, [...values, Math.min(50000, parseInt(limit) || 10000)]);
 
     if (formato === 'excel') {
-      // Deduplicar por id (evita filas repetidas)
       const seen = new Set();
       const rowsUnicos = (q.rows || []).filter(r => {
         const id = r?.id;
@@ -144,7 +173,6 @@ router.post('/descargar', async (req, res) => {
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Inspección EPCC Bomberman');
 
-      // Si no hay filas, devolver un libro vacío con una hoja y salir
       if (!rowsUnicos.length) {
         res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition','attachment; filename=inspeccion_epcc.xlsx');
@@ -199,7 +227,7 @@ router.post('/descargar', async (req, res) => {
       return;
     }
 
-    // fallback CSV
+    // CSV fallback
     const keys = q.rows[0] ? Object.keys(q.rows[0]) : [];
     const header = keys.length ? keys : ['id','fecha','operador','obra','cliente'];
     const lines = [header.join(',')];

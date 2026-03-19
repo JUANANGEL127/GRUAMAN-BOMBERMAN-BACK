@@ -1,7 +1,15 @@
 import express from "express";
 const router = express.Router();
 
-// GET /admin_usuarios/listar?empresa_id=1&offset=0&limit=10&busqueda=Juan
+/**
+ * GET /admin_usuarios/listar
+ * Retorna una lista paginada y opcionalmente filtrada de trabajadores para una empresa dada.
+ * @query {number} [empresa_id=1]
+ * @query {number} [offset=0]
+ * @query {number} [limit=10]
+ * @query {string} [busqueda] - Coincidencia parcial sin distinción de mayúsculas en `nombre`.
+ * @returns {{ success: boolean, total: number, trabajadores: Array }}
+ */
 router.get("/listar", async (req, res) => {
   try {
     const pool = global.db;
@@ -16,7 +24,6 @@ router.get("/listar", async (req, res) => {
       `SELECT id, nombre, empresa_id, numero_identificacion, activo, pin_habilitado FROM trabajadores ${where} ORDER BY id DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
       [...values, limit, offset]
     );
-    // Total para paginación
     const totalQ = await pool.query(
       `SELECT COUNT(*) FROM trabajadores WHERE empresa_id = $1${busqueda ? " AND LOWER(nombre) LIKE $2" : ""}`,
       busqueda ? [empresa_id, `%${busqueda.toLowerCase()}%`] : [empresa_id]
@@ -27,7 +34,13 @@ router.get("/listar", async (req, res) => {
   }
 });
 
-// POST /admin_usuarios/agregar
+/**
+ * POST /admin_usuarios/agregar
+ * Crea un nuevo registro de trabajador.
+ * @body {{ nombre: string, empresa_id: number, numero_identificacion: string, activo?: boolean }}
+ * @returns {{ success: boolean, trabajador: object }}
+ * @throws {400} Si faltan campos obligatorios.
+ */
 router.post("/agregar", async (req, res) => {
   try {
     const pool = global.db;
@@ -46,7 +59,15 @@ router.post("/agregar", async (req, res) => {
   }
 });
 
-// PATCH /admin_usuarios/estado/:id
+/**
+ * PATCH /admin_usuarios/estado/:id
+ * Alterna el estado activo/inactivo de un trabajador.
+ * @param {string} id - ID del trabajador.
+ * @body {{ activo: boolean }}
+ * @returns {{ success: boolean, trabajador: { id, nombre, activo } }}
+ * @throws {400} Si `activo` no es booleano.
+ * @throws {404} Si el trabajador no existe.
+ */
 router.patch("/estado/:id", async (req, res) => {
   try {
     const pool = global.db;
@@ -66,8 +87,16 @@ router.patch("/estado/:id", async (req, res) => {
   }
 });
 
-// PATCH /admin_usuarios/pin/:id
-// Admin habilita o deshabilita el PIN para un usuario específico
+/**
+ * PATCH /admin_usuarios/pin/:id
+ * Habilita o deshabilita la autenticación por PIN para un trabajador.
+ * Al deshabilitar, el hash del PIN almacenado se limpia para que el trabajador deba crear uno nuevo si se rehabilita.
+ * @param {string} id - ID del trabajador.
+ * @body {{ pin_habilitado: boolean }}
+ * @returns {{ success: boolean, trabajador: { id, nombre, pin_habilitado } }}
+ * @throws {400} Si `pin_habilitado` no es booleano.
+ * @throws {404} Si el trabajador no existe.
+ */
 router.patch("/pin/:id", async (req, res) => {
   try {
     const pool = global.db;
@@ -76,7 +105,6 @@ router.patch("/pin/:id", async (req, res) => {
     if (typeof pin_habilitado !== "boolean") {
       return res.status(400).json({ success: false, error: "pin_habilitado debe ser booleano" });
     }
-    // Al deshabilitar el PIN, también borra el hash para que el usuario tenga que crear uno nuevo si se reactiva
     const q = await pool.query(
       `UPDATE trabajadores SET pin_habilitado = $1, pin_hash = CASE WHEN $1 = false THEN NULL ELSE pin_hash END
        WHERE id = $2 RETURNING id, nombre, pin_habilitado`,

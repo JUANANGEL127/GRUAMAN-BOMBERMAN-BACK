@@ -4,7 +4,6 @@ import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator
 import { formatDateOnly } from '../../helpers/dateUtils.js';
 const router = Router();
 
-// Middleware para verificar si la base de datos está disponible
 router.use((req, res, next) => {
   if (!global.db) {
     console.error("DB no disponible en middleware de checklist");
@@ -13,7 +12,12 @@ router.use((req, res, next) => {
   next();
 });
 
-// Obtiene los nombres de las columnas válidas y si son requeridas
+/**
+ * Obtiene todos los nombres de columna y su nulabilidad para una tabla dada.
+ * @param {import('pg').Pool} db
+ * @param {string} tabla
+ * @returns {Promise<Array<{ nombre: string, requerido: boolean }>>}
+ */
 async function obtenerCamposValidosYRequeridos(db, tabla) {
   const result = await db.query(
     `SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = $1`,
@@ -25,7 +29,25 @@ async function obtenerCamposValidosYRequeridos(db, tabla) {
   }));
 }
 
-// Guarda un nuevo checklist en la base de datos
+/**
+ * POST /bomberman/checklist
+ * Guarda un registro de checklist de bomba/equipo. Solo se validan aquí los campos de encabezado comunes a todos los roles;
+ * los campos de inspección varían según el rol (operador vs. auxiliar) y
+ * el frontend los envía de forma selectiva.
+ * Tras guardar, genera un PDF desde la plantilla de administrador y lo envía por correo.
+ * Opcionalmente envía el PDF a Signio para firma electrónica.
+ *
+ * @body {{
+ *   nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string,
+ *   nombre_operador: string, bomba_numero: string, horometro_motor: string,
+ *   requiere_firma?: boolean,
+ *   firmante_principal?: { nombre: string, cedula: string, email: string, celular?: string },
+ *   firmantes_externos?: Array<{ nombre: string, cedula: string, email: string, celular?: string }>,
+ *   [field: string]: any
+ * }}
+ * @returns {{ message: string, id: number, firma?: object }}
+ * @throws {400} Si faltan campos de encabezado o no se encontraron columnas válidas.
+ */
 router.post("/", async (req, res) => {
   const db = global.db;
   if (!db) {
@@ -33,10 +55,6 @@ router.post("/", async (req, res) => {
   }
   let data = req.body;
 
-  // Solo se validan los campos de cabecera comunes a todos los cargos.
-  // Los campos de inspección varían según el cargo (operario/auxiliar): el
-  // frontend envía únicamente los campos del cargo activo, por lo que
-  // validar campos de ambos cargos aquí rechazaría siempre con 400.
   const camposRequeridos = [
     "nombre_cliente",
     "nombre_proyecto",
@@ -61,7 +79,7 @@ router.post("/", async (req, res) => {
   try {
     const columnas = await obtenerCamposValidosYRequeridos(db, "checklist");
     const camposValidos = columnas.map(col => col.nombre);
-    // Campos que NO se normalizan (numéricos, fechas, texto libre)
+
     const noNormalizar = new Set([
       "radio_marca_serial_estado", "arnes_marca_serial_fecha_estado", "eslinga_marca_serial_fecha_estado",
       "combustible_pimpinas", "ultima_fecha_lavado_tanque", "dias_grasa", "punto_engrase_tapado",
@@ -77,8 +95,14 @@ router.post("/", async (req, res) => {
         k !== "fecha_servicio" && k !== "nombre_operador" &&
         k !== "bomba_numero" && k !== "horometro_motor"
     ));
-    // Normaliza valores según opciones del formulario (Bueno/Malo, SI/NO, Limpio, etc.)
-    function normalizeOption(val, campo) {
+
+    /**
+     * Convierte el valor de un campo de checklist a una de las cadenas de opción aceptadas.
+     * Soporta BUENO/REGULAR/MALO, SI/NO, Limpio/No limpio, Realizado/No realizado, etc.
+     * @param {*} val
+     * @returns {string}
+     */
+    function normalizeOption(val) {
       if (val === undefined || val === null) return "REGULAR";
       if (typeof val === "string") {
         const s = val.trim().toUpperCase().replace(/\s+/g, "_");
@@ -87,33 +111,28 @@ router.post("/", async (req, res) => {
         if (["B", "GOOD"].includes(s)) return "BUENO";
         if (["R", "AVERAGE"].includes(s)) return "REGULAR";
         if (["M", "BAD"].includes(s)) return "MALO";
-        // chasis_aceite_motor, aceite_hidrolavadora: Bueno - Emulsionado
         if (s === "EMULSIONADO") return "EMULSIONADO";
-        // chasis_nivel_refrigerante: Bajo - Normal
         if (["BAJO", "NORMAL"].includes(s)) return s;
-        // sensor_motor_aspas, mecanismo_tubo_s, vertical_tallo_recta: SI - NO
         if (["SI", "NO"].includes(s)) return s;
-        // filtro_primario_combustible: Limpio - No limpio
         if (s === "LIMPIO") return "LIMPIO";
         if (["NO_LIMPIO", "NOLIMPIO", "NO LIMPIO"].includes(s)) return "NO LIMPIO";
-        // drenaje_filtro_combustible: Realizado - No realizado
         if (s === "REALIZADO") return "Realizado";
         if (["NO_REALIZADO", "NOREALIZADO", "NO REALIZADO"].includes(s)) return "No realizado";
-        // partes_faltantes_nuevo: Si faltan - No faltan
         if (["SI_FALTAN", "FALTAN"].includes(s)) return "Si faltan";
         if (["NO_FALTAN", "NOFALTAN"].includes(s)) return "No faltan";
-        // caja_agua_condiciones: Cumple - No cumple
         if (["CUMPLE", "CUMPLE_CON_CONDICIONES"].includes(s)) return "Cumple con las condiciones";
         if (["NO_CUMPLE", "NOCUMPLE"].includes(s)) return "No cumple con las condiciones";
         return "REGULAR";
       }
       return "REGULAR";
     }
+
     camposValidos.forEach(campo => {
       if (optionFields.has(campo) && data[campo] !== undefined) {
         data[campo] = normalizeOption(data[campo], campo);
       }
     });
+
     const camposExcluidos = new Set(['equipo_limpio', 'equipo_limpio_observacion', 'embolos_empuje', 'embolos_empuje_observacion']);
     const campos = Object.keys(data).filter(key => camposValidos.includes(key) && !camposExcluidos.has(key));
     const valores = campos.map(key => data[key]);
@@ -127,22 +146,18 @@ router.post("/", async (req, res) => {
     );
     const checklistId = insertResult.rows[0]?.id;
 
-    // --- Datos de firmantes (opcional, enviados desde el frontend) ---
-    const { 
+    const {
       requiere_firma = false,
-      firmante_principal,  // { nombre, cedula, email, celular }
-      firmantes_externos   // [{ nombre, cedula, email, celular }, ...]
+      firmante_principal,
+      firmantes_externos
     } = req.body;
 
-    // --- Generar PDF y enviar por correo ---
-    // Reutiliza la función de checklist_admin.js para generar el PDF llenando checklist_admin_template.xlsx
     let pdfBuf = null;
     try {
       const adminModule = await import(process.cwd() + '/routes/administrador_bomberman/checklist_admin.js');
       const generarPDFPorChecklist = adminModule.generarPDFPorChecklist || (adminModule.default && adminModule.default.generarPDFPorChecklist);
       if (typeof generarPDFPorChecklist !== 'function') throw new Error('No se pudo importar la función generarPDFPorChecklist');
-      
-      // Incluir todos los campos del checklist para el PDF (compatibles con checklist_admin_template.xlsx)
+
       const datosPDF = {
         nombre_cliente: data.nombre_cliente || '',
         nombre_proyecto: data.nombre_proyecto || '',
@@ -153,17 +168,14 @@ router.post("/", async (req, res) => {
       };
       if (data.empresa_id != null) datosPDF.empresa_id = data.empresa_id;
       if (data.observaciones) datosPDF.observaciones = data.observaciones;
-      // Pasar todos los campos del checklist y sus observaciones al PDF
       Object.keys(data).forEach(campo => {
         if (camposValidos.includes(campo) && data[campo] !== undefined && data[campo] !== null) {
           datosPDF[campo] = data[campo];
         }
       });
-      
-      // Genera el PDF con todos los datos necesarios
+
       pdfBuf = await generarPDFPorChecklist(datosPDF);
-      
-      // Destinatarios: siempre dir.bombas + email del departamento según obra
+
       const correoFijo = 'dir.bombas@gruasyequipos.com';
       const correos = new Set([correoFijo]);
       try {
@@ -179,20 +191,16 @@ router.post("/", async (req, res) => {
           correos.add(obraRes.rows[0].email.trim());
         }
       } catch (qErr) {
-        console.warn('No se pudo obtener email por departamento (tabla departamentos/obras puede no estar configurada):', qErr.message);
+        console.warn('No se pudo obtener email por departamento:', qErr.message);
       }
       const destinatarios = [...correos].filter(Boolean).join(', ');
 
-      // Enviar correo con PDF adjunto
       const nodemailer = await import('nodemailer');
       const transporter = nodemailer.default.createTransport({
         host: process.env.SMTP_HOST,
         port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 465,
         secure: true,
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS
-        }
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
       });
       await transporter.sendMail({
         from: process.env.SMTP_FROM,
@@ -205,11 +213,9 @@ router.post("/", async (req, res) => {
       console.error('Error generando PDF o enviando correo:', mailErr);
     }
 
-    // --- Enviar a firma electrónica si se requiere ---
     let resultadoFirma = null;
     if (requiere_firma && pdfBuf && firmante_principal) {
       try {
-        // Enviar a Signio
         resultadoFirma = await enviarDocumentoAFirmar({
           nombre_documento: `Checklist de Bomba - ${data.nombre_cliente || 'Cliente'}`,
           external_id: `checklist_${checklistId}`,
@@ -231,7 +237,6 @@ router.post("/", async (req, res) => {
           })) : []
         });
 
-        // Guardar ID de transacción en la base de datos (si existe la columna)
         if (resultadoFirma.success && resultadoFirma.transaccion_id && checklistId) {
           try {
             await db.query(
@@ -239,37 +244,24 @@ router.post("/", async (req, res) => {
               [resultadoFirma.transaccion_id, checklistId]
             );
           } catch (updateErr) {
-            // La columna puede no existir, no es crítico
             console.log('Nota: No se pudo guardar signio_transaccion_id (columna puede no existir)');
           }
         }
-
       } catch (firmaErr) {
         console.error('Error enviando a firma electrónica:', firmaErr);
         resultadoFirma = { success: false, error: firmaErr.message };
       }
     }
 
-    // Respuesta final
-    const respuesta = { 
+    const respuesta = {
       message: "Checklist guardado correctamente y PDF enviado por correo",
       id: checklistId
     };
 
     if (requiere_firma) {
-      if (resultadoFirma?.success) {
-        respuesta.firma = {
-          success: true,
-          url_firma: resultadoFirma.url_firma,
-          transaccion_id: resultadoFirma.transaccion_id,
-          mensaje: "Documento enviado a firma electrónica"
-        };
-      } else {
-        respuesta.firma = {
-          success: false,
-          error: resultadoFirma?.error || "No se pudo procesar la firma"
-        };
-      }
+      respuesta.firma = resultadoFirma?.success
+        ? { success: true, url_firma: resultadoFirma.url_firma, transaccion_id: resultadoFirma.transaccion_id, mensaje: "Documento enviado a firma electrónica" }
+        : { success: false, error: resultadoFirma?.error || "No se pudo procesar la firma" };
     }
 
     res.json(respuesta);
@@ -279,14 +271,17 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Obtiene todos los registros de la tabla checklist
+/**
+ * GET /bomberman/checklist
+ * Retorna todos los registros de checklist ordenados del más reciente al más antiguo.
+ * @returns {{ registros: Array }}
+ */
 router.get("/", async (req, res) => {
   const db = global.db;
   if (!db) {
     return res.status(500).json({ error: "DB no disponible" });
   }
   try {
-    // Trae todos los datos y columnas de la tabla checklist
     const result = await db.query(`SELECT * FROM checklist ORDER BY id DESC`);
     res.json({ registros: result.rows });
   } catch (error) {

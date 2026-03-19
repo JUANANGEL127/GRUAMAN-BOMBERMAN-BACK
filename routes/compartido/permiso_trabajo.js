@@ -3,32 +3,54 @@ import { enviarDocumentoAFirmar } from '../signio.js';
 import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = Router();
 
-// Verifica disponibilidad de la DB
 router.use((req, res, next) => {
   if (!global.db) return res.status(503).json({ error: "DB no disponible" });
   next();
 });
 
-// Inserta un permiso de trabajo; el front debe enviar los campos tal como en la tabla
+/**
+ * Normaliza un valor verdadero/falso a la restricción "SI" | "NO" | "NA" esperada por la BD.
+ * Maneja variantes booleanas, numéricas (1/0) y de cadena.
+ * @param {*} val
+ * @returns {"SI"|"NO"|"NA"}
+ */
+function normalizeOption(val) {
+  if (val === undefined || val === null) return "NA";
+  if (typeof val === "boolean") return val ? "SI" : "NO";
+  if (typeof val === "number") return val === 1 ? "SI" : (val === 0 ? "NO" : "NA");
+  if (typeof val === "string") {
+    const s = val.trim().toLowerCase();
+    if (["si","s","yes","y","1"].includes(s)) return "SI";
+    if (["no","n","not","0"].includes(s)) return "NO";
+    if (s === "" || ["na","n/a","none","null","undefined"].includes(s)) return "NA";
+    return "NA";
+  }
+  return "NA";
+}
+
+/**
+ * POST /compartido/permiso_trabajo
+ * Inserta un registro de permiso de trabajo.
+ * Los campos de tipo opción se convierten a "SI" | "NO" | "NA" independientemente de su formato de origen.
+ * @body {{ nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, cargo: string, [field: string]: any }}
+ * @returns {{ message: string, id: number }}
+ * @throws {400} Si faltan campos requeridos.
+ */
 router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
 
-  // Campos mínimos requeridos (solo datos esenciales)
   const required = ["nombre_cliente","nombre_proyecto","fecha_servicio","nombre_operador","cargo"];
-  // Considerar cadena vacía como faltante (trim)
   const faltantes = required.filter(k => {
     const v = body[k];
     return v === undefined || v === null || (typeof v === "string" && v.trim() === "");
   });
   if (faltantes.length) return res.status(400).json({ error: "Faltan campos requeridos", faltantes });
 
-  // Normalizar herramientas_seleccionadas: acepta array o string
   let herramientas = body.herramientas_seleccionadas;
   if (Array.isArray(herramientas)) herramientas = herramientas.join(", ");
   if (herramientas === undefined) herramientas = null;
 
-  // Campos que deben contener 'SI' | 'NO' | 'NA' según el CHECK de la tabla
   const optionFields = new Set([
     "trabajo_rutinario","tarea_en_alturas",
     "certificado_alturas","seguridad_social_arl","casco_tipo1","gafas_seguridad","proteccion_auditiva","proteccion_respiratoria",
@@ -39,22 +61,6 @@ router.post("/", async (req, res) => {
     "plan_emergencia_rescate","medidas_caida","kit_rescate","permisos","condiciones_atmosfericas","distancia_vertical_caida",
     "vertical_fija","vertical_portatil","andamio_multidireccional","andamio_colgante","elevador_carga","canasta","ascensores"
   ]);
-
-  // Normaliza valores a 'SI'|'NO'|'NA'
-  function normalizeOption(val) {
-    if (val === undefined || val === null) return "NA";
-    if (typeof val === "boolean") return val ? "SI" : "NO";
-    if (typeof val === "number") return val === 1 ? "SI" : (val === 0 ? "NO" : "NA");
-    if (typeof val === "string") {
-      const s = val.trim().toLowerCase();
-      if (["si","s","yes","y","1"].includes(s)) return "SI";
-      if (["no","n","not","0"].includes(s)) return "NO";
-      if (s === "" || ["na","n/a","none","null","undefined"].includes(s)) return "NA";
-      // si viene algún texto fuera de lo esperado, devolver 'NA' para no violar constraint
-      return "NA";
-    }
-    return "NA";
-  }
 
   const fields = [
     "nombre_cliente","nombre_proyecto","fecha_servicio","nombre_operador","cargo",
@@ -70,7 +76,6 @@ router.post("/", async (req, res) => {
     "observaciones","motivo_suspension","nombre_suspende","nombre_responsable","nombre_coordinador"
   ];
 
-  // Construir valores aplicando normalización para campos tipo opción
   const values = fields.map(f => {
     if (f === "herramientas_seleccionadas") return herramientas;
     const v = body[f];
@@ -90,7 +95,12 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Lista los permisos guardados (últimos 200 por defecto)
+/**
+ * GET /compartido/permiso_trabajo
+ * Retorna los registros de permiso de trabajo más recientes.
+ * @query {number} [limit=200] - Número máximo de registros a retornar.
+ * @returns {{ registros: Array }}
+ */
 router.get("/", async (req, res) => {
   const db = global.db;
   try {

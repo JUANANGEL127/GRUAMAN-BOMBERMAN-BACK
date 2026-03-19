@@ -1,16 +1,18 @@
 /**
- * Construye una cláusula WHERE dinámica con parámetros posicionales para PostgreSQL.
+ * Construye una cláusula WHERE parametrizada para PostgreSQL a partir de un objeto de parámetros plano.
  *
- * Campos especiales reconocidos:
- *   - fecha_from  → CAST(fecha_servicio AS date) >= $n
- *   - fecha_to    → CAST(fecha_servicio AS date) <= $n
- *   - fecha       → CAST(fecha_servicio AS date) = $n
- *   - empresa_id  → empresa_id = $n  (comparación numérica exacta)
- *   - resto       → campo ILIKE $n   (búsqueda parcial insensible a mayúsculas)
+ * Claves especiales:
+ *   - `fecha_from`  → `CAST(fecha_servicio AS date) >= $n`
+ *   - `fecha_to`    → `CAST(fecha_servicio AS date) <= $n`
+ *   - `fecha`       → `CAST(fecha_servicio AS date) = $n`
+ *   - `empresa_id`  → `empresa_id = $n` (coincidencia numérica exacta)
+ *   - todas las demás → `campo ILIKE $n` (parcial, sin distinción de mayúsculas)
  *
- * @param {object} params        - Objeto con los parámetros de búsqueda (p.ej. req.query)
- * @param {string[]} allowedFields - Lista de claves permitidas; cualquier otra se ignora
- * @returns {{ where: string, values: any[] }}
+ * Las claves no presentes en `allowedFields` se ignoran silenciosamente.
+ *
+ * @param {object} params - Objeto de parámetros de consulta (ej. `req.query`).
+ * @param {string[]} allowedFields - Lista blanca de claves de parámetros aceptadas.
+ * @returns {{ where: string, values: any[] }} Fragmento SQL y array de valores enlazados.
  */
 export function buildWhere(params, allowedFields = []) {
   const clauses = [];

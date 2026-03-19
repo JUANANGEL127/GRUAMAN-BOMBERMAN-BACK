@@ -1,6 +1,10 @@
 import { Router } from "express";
 const router = Router();
 
+/**
+ * Lista canónica de artículos del kit. Para cada artículo, se gestionan tres columnas:
+ * `{item}_buena` (entero), `{item}_mala` (entero), `{item}_estado` (texto).
+ */
 const ITEMS = [
   "detergente_polvo", "jabon_rey", "espatula_flexible", "grasa_litio",
   "aceite_hidraulico", "plastico_grueso", "talonario_bombeo", "extintor",
@@ -8,40 +12,47 @@ const ITEMS = [
   "auricular", "pimpina_acpm", "bola_limpieza", "perros", "guaya"
 ];
 
-// Middleware: verifica disponibilidad de la DB
 router.use((req, res, next) => {
   if (!global.db) return res.status(503).json({ error: "DB no disponible" });
   next();
 });
 
-// POST: guarda un registro de kit de limpieza
+/**
+ * Convierte un valor a entero no negativo, usando 0 como valor predeterminado para entradas vacías o nulas.
+ * @param {*} val
+ * @returns {number}
+ */
+function normalizeInteger(val) {
+  if (val === undefined || val === null || val === '') return 0;
+  const parsed = parseInt(val, 10);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * POST /bomberman/kit_limpieza
+ * Inserta un registro de inventario del kit de limpieza.
+ * Para cada artículo en ITEMS, acepta `{item}_buena`, `{item}_mala` (cantidades) y `{item}_estado` (texto).
+ * @body {{ nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, bomba_numero: string, observaciones?: string, [item_field: string]: any }}
+ * @returns {{ ok: boolean, id: number }}
+ * @throws {400} Si faltan campos de encabezado requeridos.
+ */
 router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
 
-  // Campos obligatorios: datos generales
   const required = [
     "nombre_cliente", "nombre_proyecto", "fecha_servicio",
     "nombre_operador", "bomba_numero"
   ];
 
-  // Validar campos requeridos
   const faltantes = required.filter(k => body[k] === undefined || body[k] === null);
   if (faltantes.length) {
     return res.status(400).json({ error: "Faltan campos requeridos", faltantes });
   }
 
-  function normalizeInteger(val) {
-    if (val === undefined || val === null || val === '') return 0;
-    const parsed = parseInt(val, 10);
-    return isNaN(parsed) ? 0 : parsed;
-  }
-
-  // Construir campos y valores
   const fields = [...required];
   const values = required.map(f => body[f]);
 
-  // Agregar campos _buena, _mala y _estado de cada item
   for (const base of ITEMS) {
     const buena = `${base}_buena`;
     const mala  = `${base}_mala`;
@@ -58,7 +69,6 @@ router.post("/", async (req, res) => {
     values.push(estadoVal === undefined || estadoVal === null ? '' : String(estadoVal).trim());
   }
 
-  // Campo observaciones (opcional)
   if (body.observaciones !== undefined) {
     fields.push("observaciones");
     values.push(body.observaciones === null ? null : String(body.observaciones).trim());
@@ -76,7 +86,11 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET: lista los últimos 200 registros
+/**
+ * GET /bomberman/kit_limpieza
+ * Retorna los 200 registros de kit de limpieza más recientes ordenados por marca de tiempo de creación.
+ * @returns {{ registros: Array }}
+ */
 router.get("/", async (req, res) => {
   const db = global.db;
   try {

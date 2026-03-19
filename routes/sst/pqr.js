@@ -6,7 +6,13 @@ router.use((req, res, next) => {
   next();
 });
 
-// POST /sst/pqr — guarda una nueva PQR
+/**
+ * POST /sst/pqr
+ * Crea un nuevo registro de PQR (Petición, Queja o Reclamo).
+ * @body {{ nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, nombre_director: string, area: string, pqr: string }}
+ * @returns {{ ok: boolean, id: number }}
+ * @throws {400} Si algún campo requerido está ausente o vacío.
+ */
 router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
@@ -40,7 +46,11 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /sst/pqr — lista todas las PQR (para administración futura)
+/**
+ * GET /sst/pqr
+ * Retorna todos los registros de PQR ordenados por fecha descendente.
+ * @returns {{ pqr: Array }}
+ */
 router.get("/", async (req, res) => {
   const db = global.db;
   try {

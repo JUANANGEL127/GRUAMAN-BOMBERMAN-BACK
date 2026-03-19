@@ -6,7 +6,13 @@ import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/d
 import { buildWhere } from '../../helpers/queryBuilder.js';
 const router = express.Router();
 
-// GET /planilla_bombeo/search -> búsqueda por query params (opcional)
+/**
+ * GET /planilla_bombeo/search
+ * Búsqueda flexible por query string en registros de planilla de bombeo.
+ * Asigna automáticamente `fecha_to` a hoy cuando `fecha_from` se proporciona sin fecha de fin.
+ * @query {{ nombre_cliente?, nombre_proyecto?, fecha?, fecha_from?, fecha_to?, nombre_operador?, bomba_numero?, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array }}
+ */
 router.get('/planilla_bombeo/search', async (req, res) => {
   try {
     const pool = global.db;
@@ -24,7 +30,14 @@ router.get('/planilla_bombeo/search', async (req, res) => {
   }
 });
 
-// POST /buscar -> filtros en body JSON
+/**
+ * POST /buscar
+ * Busca registros de planilla de bombeo usando filtros del body. Une las remisiones asociadas
+ * como un array JSON por fila de planilla.
+ * Retorna una estructura normalizada con una propiedad `raw` que contiene la fila original de la BD.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array<{ fecha: string, nombre: string, cedula: string|null, empresa: string, obra: string, constructora: string, remisiones: Array, raw: object }> }}
+ */
 router.post('/buscar', async (req, res) => {
   try {
     const pool = global.db;
@@ -46,13 +59,12 @@ router.post('/buscar', async (req, res) => {
     if (endDate) { clauses.push(`CAST(pb.fecha_servicio AS date) <= $${idx++}`); values.push(endDate); }
 
     const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
-    // Consulta para traer planillas y sus remisiones asociadas (array)
     const q = await pool.query(
-      `SELECT pb.*, 
+      `SELECT pb.*,
         COALESCE(
           (
-            SELECT json_agg(r.*) 
-            FROM remisiones r 
+            SELECT json_agg(r.*)
+            FROM remisiones r
             WHERE r.planilla_bombeo_id = pb.id
           ), '[]'
         ) AS remisiones
@@ -63,7 +75,6 @@ router.post('/buscar', async (req, res) => {
       [...values, Math.min(1000, parseInt(limit) || 200), parseInt(offset) || 0]
     );
 
-    // remisiones debe ser array de objetos, no string
     const rows = q.rows.map(r => ({
       fecha: formatDateOnly(r.fecha_servicio),
       nombre: r.nombre_operador || '',
@@ -82,7 +93,12 @@ router.post('/buscar', async (req, res) => {
   }
 });
 
-// genera PDF de una inspección en una sola hoja (Buffer)
+/**
+ * Genera un PDF de registro único para una planilla de bombeo, incluyendo todas las
+ * remisiones asociadas renderizadas como lista numerada.
+ * @param {object} r - Fila de BD de planilla_bombeo con un arreglo `remisiones` embebido.
+ * @returns {Promise<Buffer>}
+ */
 async function generarPDFPorPlanilla(r) {
   return new Promise((resolve, reject) => {
     try {
@@ -99,7 +115,6 @@ async function generarPDFPorPlanilla(r) {
       doc.text(`Operador: ${r.nombre_operador || ''}`);
       doc.text(`Bomba: ${r.bomba_numero || ''}`);
       doc.moveDown();
-      // incluir campos importantes de planilla_bombeo
       const campos = [
         'hora_inicio_acpm','hora_final_acpm','horometro_inicial','horometro_final',
         'nombre_auxiliar','total_metros_cubicos_bombeados','remision','metros','observaciones'
@@ -110,7 +125,6 @@ async function generarPDFPorPlanilla(r) {
         }
       });
 
-      // Incluir remisiones en el mismo PDF
       if (Array.isArray(r.remisiones) && r.remisiones.length > 0) {
         doc.moveDown();
         doc.fontSize(13).text('Remisiones:', { underline: true });
@@ -128,6 +142,12 @@ async function generarPDFPorPlanilla(r) {
   });
 }
 
+/**
+ * Construye un mapa del nombre de obra al nombre de sede (departamento) uniendo obras con departamentos.
+ * Retorna un objeto vacío silenciosamente si la consulta falla.
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<Record<string, string>>}
+ */
 async function buildSedeMap(pool) {
   const sedeMap = {};
   try {
@@ -143,7 +163,16 @@ async function buildSedeMap(pool) {
   return sedeMap;
 }
 
-// POST /descargar -> genera XLSX o ZIP de PDFs
+/**
+ * POST /descargar
+ * Exporta registros filtrados de planilla de bombeo en el formato solicitado.
+ * - `excel`: XLSX con tabla estilizada, deduplicada por id, con columna `sede`.
+ *   La columna `remisiones` se serializa como JSON.
+ * - `pdf`: archivo ZIP con un PDF por registro.
+ * - Por defecto: CSV con las columnas identificadoras principales más remisiones como JSON.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, formato?: 'excel'|'pdf'|'csv', limit?: number }}
+ * @returns {Buffer} Adjunto en el formato solicitado.
+ */
 router.post('/descargar', async (req, res) => {
   try {
     const pool = global.db;
@@ -161,13 +190,12 @@ router.post('/descargar', async (req, res) => {
     if (endDate) { clauses.push(`CAST(pb.fecha_servicio AS date) <= $${idx++}`); values.push(endDate); }
 
     const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
-    // Consulta para traer planillas y sus remisiones asociadas (array)
     const q = await pool.query(
-      `SELECT pb.*, 
+      `SELECT pb.*,
         COALESCE(
           (
-            SELECT json_agg(r.*) 
-            FROM remisiones r 
+            SELECT json_agg(r.*)
+            FROM remisiones r
             WHERE r.planilla_bombeo_id = pb.id
           ), '[]'
         ) AS remisiones
@@ -179,7 +207,6 @@ router.post('/descargar', async (req, res) => {
     );
 
     if (formato === 'excel') {
-      // Deduplicar por id (evita filas repetidas)
       const seen = new Set();
       const rowsUnicos = (q.rows || []).filter(r => {
         const id = r?.id;
@@ -191,7 +218,6 @@ router.post('/descargar', async (req, res) => {
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Planilla Bombeo');
 
-      // Si no hay filas, devolver un libro vacío con una hoja y salir
       if (!rowsUnicos.length) {
         res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition','attachment; filename=planilla_bombeo.xlsx');
@@ -247,7 +273,7 @@ router.post('/descargar', async (req, res) => {
       return;
     }
 
-    // fallback CSV
+    // CSV fallback
     const header = ['id','fecha','operador','obra','cliente','remisiones'];
     const lines = [header.join(',')];
     for (const r of q.rows) {

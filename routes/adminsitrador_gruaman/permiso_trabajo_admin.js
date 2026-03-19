@@ -6,7 +6,13 @@ import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/d
 import { buildWhere } from '../../helpers/queryBuilder.js';
 const router = express.Router();
 
-// GET /permiso_trabajo -> lista paginada
+/**
+ * GET /adminsitrador_gruaman/permiso_trabajo
+ * Retorna una lista paginada de registros de permiso de trabajo ordenados por más reciente primero.
+ * @query {number} [limit=50] - Máximo 100.
+ * @query {number} [offset=0]
+ * @returns {{ success: boolean, count: number, rows: Array }}
+ */
 router.get('/permiso_trabajo', async (req, res) => {
   try {
     const pool = global.db;
@@ -23,7 +29,14 @@ router.get('/permiso_trabajo', async (req, res) => {
   }
 });
 
-// GET /permiso_trabajo/:id -> obtener por id
+/**
+ * GET /adminsitrador_gruaman/permiso_trabajo/:id
+ * Recupera un único permiso de trabajo por su clave primaria.
+ * @param {number} id
+ * @returns {{ success: boolean, row: object }}
+ * @throws {400} Si el id no es un entero válido.
+ * @throws {404} Si ningún registro coincide con el id dado.
+ */
 router.get('/permiso_trabajo/:id', async (req, res) => {
   try {
     const pool = global.db;
@@ -38,16 +51,19 @@ router.get('/permiso_trabajo/:id', async (req, res) => {
   }
 });
 
-// GET /permiso_trabajo/search -> búsquedas flexibles usando query params
-// Permite: cliente_constructora (nombre_cliente), nombre_proyecto, fecha (YYYY-MM-DD), fecha_from, fecha_to, nombre_operador, nombre_responsable, limite/offset
+/**
+ * GET /adminsitrador_gruaman/permiso_trabajo/search
+ * Búsqueda flexible por query string usando el helper genérico `buildWhere`.
+ * Asigna automáticamente `fecha_to` a hoy cuando `fecha_from` se proporciona sin fecha de fin.
+ * @query {{ nombre_cliente?, nombre_proyecto?, fecha?, fecha_from?, fecha_to?, nombre_operador?, nombre_responsable?, nombre_suspende?, motivo_suspension?, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array }}
+ */
 router.get('/permiso_trabajo/search', async (req, res) => {
   try {
     const pool = global.db;
-    // Si se pasó fecha_from pero no fecha_to, usar hoy como fecha_to
     if (req.query && req.query.fecha_from && !req.query.fecha_to) {
       req.query.fecha_to = todayDateString();
     }
-    // Mapar nombres de query a columnas de la tabla permiso_trabajo
     const allowed = [
       'nombre_cliente', 'nombre_proyecto', 'fecha', 'fecha_from', 'fecha_to',
       'nombre_operador', 'nombre_responsable', 'nombre_suspende', 'motivo_suspension'
@@ -57,7 +73,6 @@ router.get('/permiso_trabajo/search', async (req, res) => {
 
     const limit = Math.min(200, parseInt(req.query.limit) || 100);
     const offset = parseInt(req.query.offset) || 0;
-    // añadir limit y offset a values
     const finalQuery = `SELECT * FROM permiso_trabajo ${where} ORDER BY id DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`;
     const finalValues = [...values, limit, offset];
 
@@ -69,7 +84,12 @@ router.get('/permiso_trabajo/search', async (req, res) => {
   }
 });
 
-// GET /all -> resumen y lista de permiso_trabajo (útil para panel administrador)
+/**
+ * GET /adminsitrador_gruaman/all
+ * Retorna todos los registros de permiso de trabajo con conteo total para uso en el panel administrativo.
+ * @query {number} [limit=100] - Máximo 200.
+ * @returns {{ success: boolean, total: number, permisos: Array }}
+ */
 router.get('/all', async (req, res) => {
   try {
     const pool = global.db;
@@ -87,28 +107,38 @@ router.get('/all', async (req, res) => {
   }
 });
 
-// POST /buscar -> filtros desde frontend (nombre, cedula, obra, constructora, fecha_inicio, fecha_fin)
+/**
+ * POST /adminsitrador_gruaman/buscar
+ * Busca registros de permiso de trabajo usando filtros del body.
+ * `nombre` se compara contra nombre_operador, nombre_responsable y nombre_suspende.
+ * `empresa_id` filtra por los nombres de trabajadores que pertenecen a esa empresa.
+ * Retorna una estructura normalizada con una propiedad `raw` que contiene la fila original de la BD.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, empresa_id?: number, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array<{ fecha: string, nombre: string, cedula: null, empresa: string, obra: string, constructora: string, raw: object }> }}
+ */
 router.post('/buscar', async (req, res) => {
   try {
     const pool = global.db;
-    const { nombre, cedula, obra, constructora, fecha_inicio, fecha_fin, limit = 200, offset = 0 } = req.body || {};
-    // Normalizar fechas a YYYY-MM-DD para comparaciones inclusivas
+    const { nombre, cedula, obra, constructora, fecha_inicio, fecha_fin, empresa_id, limit = 200, offset = 0 } = req.body || {};
     const startDate = formatDateOnly(fecha_inicio);
-    // si no se envía fecha_fin, usar hoy
     const endDate = formatDateOnly(fecha_fin) || todayDateString();
 
-    // Construir where dinámico — solo en tabla permiso_trabajo
     const clauses = [];
     const values = [];
     let idx = 1;
 
+    if (empresa_id) {
+      const empresaInt = parseInt(empresa_id);
+      if (!Number.isNaN(empresaInt)) {
+        clauses.push(`nombre_operador IN (SELECT nombre FROM trabajadores WHERE empresa_id = $${idx++})`);
+        values.push(empresaInt);
+      }
+    }
     if (nombre) {
-      // buscar en nombre_operador, nombre_responsable, nombre_suspende
       clauses.push(`(nombre_operador ILIKE $${idx} OR nombre_responsable ILIKE $${idx} OR nombre_suspende ILIKE $${idx})`);
       values.push(`%${nombre}%`);
       idx++;
     }
-    // cedula no existe en esta tabla; lo aceptamos pero no lo usamos (se podría extender con JOIN)
     if (obra) {
       clauses.push(`nombre_proyecto ILIKE $${idx++}`);
       values.push(`%${obra}%`);
@@ -122,7 +152,6 @@ router.post('/buscar', async (req, res) => {
       values.push(startDate);
     }
     if (endDate) {
-      // comparamos por date para incluir todo el día final independientemente del timezone
       clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`);
       values.push(endDate);
     }
@@ -133,15 +162,14 @@ router.post('/buscar', async (req, res) => {
       [...values, Math.min(1000, parseInt(limit) || 200), parseInt(offset) || 0]
     );
 
-    // Transformar filas al formato esperado por el front
     const rows = q.rows.map(r => ({
       fecha: formatDateOnly(r.fecha_servicio),
       nombre: r.nombre_operador || '',
-      cedula: null, // no disponible en permiso_trabajo
+      cedula: null,
       empresa: r.nombre_responsable || '',
       obra: r.nombre_proyecto || '',
       constructora: r.nombre_cliente || '',
-      raw: r // para referencia
+      raw: r
     }));
 
     res.json({ success: true, count: q.rowCount, rows });
@@ -151,7 +179,12 @@ router.post('/buscar', async (req, res) => {
   }
 });
 
-// Genera PDF resumen de permisos (mantener si se usa en otro lugar)
+/**
+ * Genera un PDF de múltiples páginas con el listado de resúmenes de permisos de trabajo.
+ * Comienza una nueva página cada 20 registros.
+ * @param {Array<object>} rows
+ * @returns {Promise<Buffer>}
+ */
 async function generarPDFPermisos(rows) {
   return new Promise((resolve, reject) => {
     try {
@@ -177,7 +210,11 @@ async function generarPDFPermisos(rows) {
   });
 }
 
-// Nueva: genera un PDF de una sola hoja para un permiso (Buffer)
+/**
+ * Genera un PDF de registro único para un permiso de trabajo con todos los campos de inspección relevantes.
+ * @param {object} r - Fila de BD del permiso de trabajo.
+ * @returns {Promise<Buffer>}
+ */
 async function generarPDFPorPermiso(r) {
   return new Promise((resolve, reject) => {
     try {
@@ -193,7 +230,6 @@ async function generarPDFPorPermiso(r) {
       doc.text(`Operador: ${r.nombre_operador || ''}`);
       doc.text(`Cargo: ${r.cargo || ''}`);
       doc.moveDown();
-      // Añadir la mayoría de campos relevantes en formato key: value
       const campos = [
         'trabajo_rutinario','tarea_en_alturas','altura_inicial','altura_final',
         'herramientas_seleccionadas','herramientas_otros',
@@ -214,19 +250,33 @@ async function generarPDFPorPermiso(r) {
   });
 }
 
-// POST /descargar -> genera CSV y lo devuelve como blob. body: mismos filtros + formato: 'excel'|'pdf'
+/**
+ * POST /adminsitrador_gruaman/descargar
+ * Exporta registros filtrados de permisos de trabajo en el formato solicitado.
+ * - `excel`: XLSX con todas las columnas en una tabla estilizada.
+ * - `pdf`: archivo ZIP con un PDF por permiso.
+ * - Por defecto: CSV con las columnas identificadoras principales.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, empresa_id?: number, formato?: 'excel'|'pdf'|'csv', limit?: number }}
+ * @returns {Buffer} Adjunto en el formato solicitado.
+ */
 router.post('/descargar', async (req, res) => {
   try {
     const pool = global.db;
-    const { nombre, cedula, obra, constructora, fecha_inicio, fecha_fin, formato = 'excel', limit = 10000 } = req.body || {};
+    const { nombre, cedula, obra, constructora, fecha_inicio, fecha_fin, empresa_id, formato = 'excel', limit = 10000 } = req.body || {};
     const startDate = formatDateOnly(fecha_inicio);
-    // si no se envía fecha_fin, usar hoy
     const endDate = formatDateOnly(fecha_fin) || todayDateString();
 
     const clauses = [];
     const values = [];
     let idx = 1;
 
+    if (empresa_id) {
+      const empresaInt = parseInt(empresa_id);
+      if (!Number.isNaN(empresaInt)) {
+        clauses.push(`nombre_operador IN (SELECT nombre FROM trabajadores WHERE empresa_id = $${idx++})`);
+        values.push(empresaInt);
+      }
+    }
     if (nombre) {
       clauses.push(`(nombre_operador ILIKE $${idx} OR nombre_responsable ILIKE $${idx} OR nombre_suspende ILIKE $${idx})`);
       values.push(`%${nombre}%`);
@@ -249,19 +299,16 @@ router.post('/descargar', async (req, res) => {
       values.push(endDate);
     }
 
-    // Ejecutar la consulta a la BD (necesaria para todos los formatos)
     const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
     const q = await pool.query(
       `SELECT * FROM permiso_trabajo ${where} ORDER BY id DESC LIMIT $${idx}`,
       [...values, Math.min(50000, parseInt(limit) || 10000)]
     );
 
-    // Si piden Excel -> generar XLSX y devolver (sin generar/enviar PDF automáticamente)
     if (formato === 'excel') {
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Permisos de Trabajo');
 
-      // Si no hay filas, devolver un libro vacío con una hoja y salir
       if (!q.rows || q.rows.length === 0) {
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', 'attachment; filename=permisos_trabajo.xlsx');
@@ -296,49 +343,42 @@ router.post('/descargar', async (req, res) => {
       return res.end();
     }
 
-    // Si piden PDF -> generar un PDF por permiso y devolver un ZIP con todos los PDFs
     if (formato === 'pdf') {
       if (!q.rows || q.rows.length === 0) {
         return res.status(404).json({ success: false, error: 'No se encontraron permisos para exportar' });
       }
 
-      // Preparar headers para ZIP
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', 'attachment; filename="permisos_trabajo.zip"');
 
       const archive = archiver('zip', { zlib: { level: 9 } });
       archive.on('error', err => {
         console.error('Archiver error:', err);
-        try { res.status(500).end(); } catch(e){/* ignore */ }
+        try { res.status(500).end(); } catch(e){ /* ignore */ }
       });
       archive.pipe(res);
 
-      // Generar PDFs secuencialmente y añadir al zip
       for (const r of q.rows) {
         try {
           const pdfBuf = await generarPDFPorPermiso(r);
-          const safeName = `permiso_${r.id}.pdf`;
-          archive.append(pdfBuf, { name: safeName });
+          archive.append(pdfBuf, { name: `permiso_${r.id}.pdf` });
         } catch (pdfErr) {
           console.error(`Error generando PDF para permiso id=${r.id}:`, pdfErr);
-          // añadir un archivo de texto indicando error para ese id
-          const errTxt = `Error generating PDF for permiso id=${r.id}: ${pdfErr.message || pdfErr}`;
-          archive.append(errTxt, { name: `permiso_${r.id}_error.txt` });
+          archive.append(`Error generating PDF for permiso id=${r.id}: ${pdfErr.message || pdfErr}`, { name: `permiso_${r.id}_error.txt` });
         }
       }
 
-      // Finalizar y dejar que la respuesta se cierre cuando termine el stream
       await archive.finalize();
-      return; // la respuesta se cierra por el stream del archive
+      return;
     }
 
-    // Fallback CSV (si formato no reconocido)
+    // CSV fallback
     const header = ['id','fecha','nombre','cedula','empresa','obra','constructora'];
     const lines = [header.join(',')];
     for (const r of q.rows) {
       const fecha = r.fecha_servicio ? formatDateOnly(r.fecha_servicio) : '';
       const nombreOp = (r.nombre_operador || '').replace(/"/g, '""');
-      const ced = ''; // no disponible en permiso_trabajo
+      const ced = '';
       const empresa = (r.nombre_responsable || '').replace(/"/g, '""');
       const obraVal = (r.nombre_proyecto || '').replace(/"/g, '""');
       const constructoraVal = (r.nombre_cliente || '').replace(/"/g, '""');
@@ -364,4 +404,3 @@ router.post('/descargar', async (req, res) => {
 });
 
 export default router;
-

@@ -15,6 +15,12 @@ const ITEMS = [
   'auricular','pimpina_acpm','bola_limpieza','perros','guaya'
 ];
 
+/**
+ * Construye una cláusula WHERE parametrizada y un array de valores a partir de los filtros del body.
+ * Usa hoy como `fecha_fin` cuando `fecha_inicio` se proporciona sin fecha de fin.
+ * @param {object} body - Body de la solicitud con campos opcionales: nombre, obra, constructora, bomba_numero, fecha_inicio, fecha_fin.
+ * @returns {{ where: string, values: Array, idx: number }}
+ */
 function buildClauses(body) {
   const { nombre, obra, constructora, bomba_numero, fecha_inicio, fecha_fin } = body || {};
   const clauses = [], values = [];
@@ -30,7 +36,13 @@ function buildClauses(body) {
   return { where: clauses.length ? 'WHERE ' + clauses.join(' AND ') : '', values, idx };
 }
 
-// POST /buscar
+/**
+ * POST /buscar
+ * Busca registros de kit de limpieza usando filtros del body. Retorna una estructura normalizada
+ * junto con una propiedad `raw` que contiene la fila completa de la BD. Incluye conteo total.
+ * @body {{ nombre?: string, obra?: string, constructora?: string, bomba_numero?: string, fecha_inicio?: string, fecha_fin?: string, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array<{ fecha: string, nombre: string, obra: string, constructora: string, bomba: string, raw: object }> }}
+ */
 router.post('/buscar', async (req, res) => {
   try {
     const pool = global.db;
@@ -56,7 +68,13 @@ router.post('/buscar', async (req, res) => {
   }
 });
 
-// genera PDF de un registro usando template XLSX + LibreOffice
+/**
+ * Genera un buffer PDF para un registro de kit de limpieza llenando una plantilla XLSX
+ * y convirtiéndola mediante LibreOffice. Busca rutas candidatas de plantilla en orden.
+ * @param {object} r - Fila de la BD de kit_limpieza.
+ * @returns {Promise<Buffer>}
+ * @throws {Error} Cuando no se encuentra el archivo de plantilla o LibreOffice no está instalado.
+ */
 async function generarPDF(r) {
   try {
     const candidatePaths = [
@@ -115,6 +133,12 @@ async function generarPDF(r) {
   }
 }
 
+/**
+ * Construye un mapa del nombre de obra al nombre de sede (departamento) uniendo obras con departamentos.
+ * Retorna un objeto vacío silenciosamente si la consulta falla.
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<Record<string, string>>}
+ */
 async function buildSedeMap(pool) {
   const sedeMap = {};
   try {
@@ -130,7 +154,15 @@ async function buildSedeMap(pool) {
   return sedeMap;
 }
 
-// POST /descargar
+/**
+ * POST /descargar
+ * Exporta registros filtrados de kit de limpieza en el formato solicitado.
+ * - `excel`: XLSX con tabla estilizada y columna `sede` derivada de obras.
+ * - `pdf`: archivo ZIP con un PDF por registro (generado mediante plantilla LibreOffice).
+ * - Cualquier otro valor: responde 400.
+ * @body {{ nombre?: string, obra?: string, constructora?: string, bomba_numero?: string, fecha_inicio?: string, fecha_fin?: string, formato?: 'excel'|'pdf', limit?: number }}
+ * @returns {Buffer} Adjunto en el formato solicitado.
+ */
 router.post('/descargar', async (req, res) => {
   try {
     const pool = global.db;

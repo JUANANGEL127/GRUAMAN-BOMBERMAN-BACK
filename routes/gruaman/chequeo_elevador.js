@@ -3,13 +3,19 @@ import { enviarDocumentoAFirmar } from '../signio.js';
 import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = express.Router();
 
-// Inserta un registro de chequeo_elevador
+/**
+ * POST /gruaman/chequeo_elevador
+ * Inserta un registro de inspección diaria de elevador de personal.
+ * Todos los campos de tipo opción toman el valor "NA" cuando se omiten.
+ * @body {{ nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, cargo: string, [field: string]: string }}
+ * @returns {{ success: boolean, id: number }}
+ * @throws {400} Si falta algún campo de encabezado requerido.
+ */
 router.post('/', async (req, res) => {
   try {
     const pool = global.db;
     const body = req.body;
 
-    // campos requeridos mínimos (nombres actualizados)
     const required = ['nombre_cliente','nombre_proyecto','fecha_servicio','nombre_operador','cargo'];
     for (const f of required) {
       if (!body[f]) return res.status(400).json({ error: `Falta campo obligatorio: ${f}` });
@@ -56,12 +62,17 @@ router.post('/', async (req, res) => {
     const result = await pool.query(query, values);
     res.json({ success: true, id: result.rows[0].id });
   } catch (err) {
-    console.error('Error insert chequeo_elevador:', err);
+    console.error('Error al insertar chequeo_elevador:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Obtiene registros (opcional ?limit=N)
+/**
+ * GET /gruaman/chequeo_elevador
+ * Retorna los registros de inspección de elevador de personal más recientes.
+ * @query {number} [limit=100]
+ * @returns {{ success: boolean, rows: Array }}
+ */
 router.get('/', async (req, res) => {
   try {
     const pool = global.db;
@@ -69,7 +80,7 @@ router.get('/', async (req, res) => {
     const q = await pool.query(`SELECT * FROM chequeo_elevador ORDER BY id DESC LIMIT $1`, [limit]);
     res.json({ success: true, rows: q.rows });
   } catch (err) {
-    console.error('Error fetching chequeo_elevador:', err);
+    console.error('Error al obtener chequeo_elevador:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

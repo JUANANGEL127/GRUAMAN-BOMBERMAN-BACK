@@ -5,34 +5,38 @@ import { PDFDocument } from 'pdf-lib';
 
 const router = express.Router();
 
-// Cache del token (expira en 2 horas)
+/**
+ * Caché del token para evitar solicitudes de autenticación redundantes.
+ * Las entradas expiran después de 1h50m para contemplar el TTL de 2h del token de Signio.
+ * @type {{ token: string|null, expiresAt: Date|null }}
+ */
 let tokenCache = {
   token: null,
   expiresAt: null
 };
 
 /**
- * Helper para obtener la URL de Signio en tiempo de ejecución
+ * Retorna la URL base de la API de Signio configurada.
+ * @returns {string}
  */
 function getSignioApiUrl() {
   return process.env.SIGNIO_API_URL || 'https://signio.stage.legops.com/api/v2';
 }
 
 /**
- * Genera u obtiene un token de autenticación de Signio
+ * Obtiene un token Bearer de Signio, usando el caché en memoria cuando es válido.
+ * @returns {Promise<string>} Cadena del token Bearer.
+ * @throws {Error} Si el endpoint de autenticación de Signio retorna un código distinto de cero.
  */
 async function getSignioToken() {
-  // Si el token está en cache y no ha expirado, usarlo
   if (tokenCache.token && tokenCache.expiresAt && new Date() < tokenCache.expiresAt) {
     return tokenCache.token;
   }
 
-  // Leer credenciales en tiempo de ejecución (no al cargar el módulo)
   const signioEmail = process.env.SIGNIO_EMAIL;
   const signioPassword = process.env.SIGNIO_PASSWORD;
   const signioApiUrl = getSignioApiUrl();
 
-  // Debug: verificar credenciales
   console.log('Signio Auth - Email:', signioEmail);
   console.log('Signio Auth - Password:', signioPassword ? '***SET***' : 'NOT SET');
   console.log('Signio Auth - URL:', `${signioApiUrl}/token/crear`);
@@ -40,20 +44,16 @@ async function getSignioToken() {
   const response = await fetch(`${signioApiUrl}/token/crear`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: signioEmail,
-      password: signioPassword
-    })
+    body: JSON.stringify({ email: signioEmail, password: signioPassword })
   });
 
   const data = await response.json();
   console.log('Signio Auth - Response:', JSON.stringify(data));
-  
+
   if (data.codigo !== '00') {
     throw new Error(`Error al obtener token de Signio: ${data.mensaje}`);
   }
 
-  // Guardar en cache (expira en 1 hora 50 minutos para tener margen)
   tokenCache.token = data.token;
   tokenCache.expiresAt = new Date(Date.now() + 110 * 60 * 1000);
 
@@ -61,7 +61,12 @@ async function getSignioToken() {
 }
 
 /**
- * Crea una transacción (sobre) en Signio
+ * Crea una transacción (sobre) en Signio.
+ * @param {string} token - Token Bearer.
+ * @param {string} nombre - Nombre visible de la transacción.
+ * @param {string} externalId - ID de referencia externo.
+ * @returns {Promise<string>} ID de transacción de Signio.
+ * @throws {Error} Si la API retorna un código distinto de cero.
  */
 async function crearTransaccion(token, nombre, externalId) {
   const response = await fetch(`${getSignioApiUrl()}/transacciones/crear`, {
@@ -71,26 +76,30 @@ async function crearTransaccion(token, nombre, externalId) {
       'Authorization': `Bearer ${token}`
     },
     body: JSON.stringify({
-      nombre: nombre,
+      nombre,
       external_id: externalId,
-      op_token: 'SCREEN',        // Código en pantalla (más rápido)
-      op_foto: 'NO',             // No pide foto
-      op_btnRechazo: 0,          // Sin botón de rechazo
-      on_premise_signature: 1    // Permite firma en sitio
+      op_token: 'SCREEN',
+      op_foto: 'NO',
+      op_btnRechazo: 0,
+      on_premise_signature: 1
     })
   });
 
   const data = await response.json();
-  
   if (data.codigo !== '00') {
     throw new Error(`Error al crear transacción: ${data.mensaje}`);
   }
-
   return data.id_transaccion;
 }
 
 /**
- * Carga un documento PDF a la transacción
+ * Carga un documento PDF a una transacción existente en Signio.
+ * @param {string} token - Token Bearer.
+ * @param {string} idTransaccion - ID de la transacción destino.
+ * @param {Buffer} pdfBuffer - Contenido del archivo PDF.
+ * @param {string} nombreArchivo - Nombre del archivo para la carga.
+ * @returns {Promise<string>} ID del documento en Signio.
+ * @throws {Error} Si la API retorna un código distinto de cero.
  */
 async function cargarDocumento(token, idTransaccion, pdfBuffer, nombreArchivo) {
   const formData = new FormData();
@@ -110,16 +119,20 @@ async function cargarDocumento(token, idTransaccion, pdfBuffer, nombreArchivo) {
   });
 
   const data = await response.json();
-  
   if (data.codigo !== '00') {
     throw new Error(`Error al cargar documento: ${data.mensaje}`);
   }
-
   return data.id_documento;
 }
 
 /**
- * Registra un firmante en la transacción
+ * Registra un firmante en una transacción.
+ * @param {string} token - Token Bearer.
+ * @param {string} idTransaccion - ID de la transacción destino.
+ * @param {{ nombre: string, tipo_identificacion?: string, identificacion: string, email: string, celular?: string, rol?: string }} firmante
+ * @param {number} orden - Orden de firma (1 = primero).
+ * @returns {Promise<string>} ID del firmante en Signio.
+ * @throws {Error} Si la API retorna un código distinto de cero.
  */
 async function registrarFirmante(token, idTransaccion, firmante, orden) {
   const response = await fetch(`${getSignioApiUrl()}/transacciones/registrar_contacto`, {
@@ -135,22 +148,27 @@ async function registrarFirmante(token, idTransaccion, firmante, orden) {
       identificacion: firmante.identificacion,
       email: firmante.email,
       celular: firmante.celular || null,
-      orden: orden,
+      orden,
       operation_rol: firmante.rol || null
     })
   });
 
   const data = await response.json();
-  
   if (data.codigo !== '00') {
     throw new Error(`Error al registrar firmante ${firmante.nombre}: ${data.mensaje}`);
   }
-
   return data.id_firmante;
 }
 
 /**
- * Vincula un firmante a un documento
+ * Vincula un firmante a un documento dentro de una transacción, opcionalmente en una posición específica.
+ * @param {string} token - Token Bearer.
+ * @param {string} idTransaccion
+ * @param {string} idFirmante
+ * @param {string} idDocumento
+ * @param {{ pagina: number, x: number, y: number, ancho: number, alto: number }|null} [posicion]
+ * @returns {Promise<true>}
+ * @throws {Error} Si la API retorna un código distinto de cero.
  */
 async function vincularFirmanteDocumento(token, idTransaccion, idFirmante, idDocumento, posicion = null) {
   const body = {
@@ -159,7 +177,6 @@ async function vincularFirmanteDocumento(token, idTransaccion, idFirmante, idDoc
     id_documento: idDocumento
   };
 
-  // Si se proporciona posición, agregarla
   if (posicion) {
     body.posicion = posicion;
   }
@@ -174,16 +191,18 @@ async function vincularFirmanteDocumento(token, idTransaccion, idFirmante, idDoc
   });
 
   const data = await response.json();
-  
   if (data.codigo !== '00') {
     throw new Error(`Error al vincular firmante: ${data.mensaje}`);
   }
-
   return true;
 }
 
 /**
- * Distribuye la transacción (envía emails a firmantes externos)
+ * Distribuye una transacción, disparando notificaciones por correo a los firmantes externos.
+ * @param {string} token - Token Bearer.
+ * @param {string} idTransaccion
+ * @returns {Promise<true>}
+ * @throws {Error} Si la API retorna un código distinto de cero.
  */
 async function distribuirTransaccion(token, idTransaccion) {
   const response = await fetch(`${getSignioApiUrl()}/transacciones/distribuir`, {
@@ -192,50 +211,47 @@ async function distribuirTransaccion(token, idTransaccion) {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`
     },
-    body: JSON.stringify({
-      id_transaccion: idTransaccion
-    })
+    body: JSON.stringify({ id_transaccion: idTransaccion })
   });
 
   const data = await response.json();
-  
   if (data.codigo !== '00') {
     throw new Error(`Error al distribuir transacción: ${data.mensaje}`);
   }
-
   return true;
 }
 
 /**
- * Genera URL firmada para proceso de firma en sitio (on-premise)
- * Según documentación Signio 6.24: PUT envelope/onpremise/get-signed-url
- * 
- * NOTA: Este endpoint puede no estar disponible en todos los ambientes/cuentas.
- * Si no está disponible, se retorna null y el flujo continúa por email.
+ * Genera una URL de firma on-premise para firma directa en el navegador (Signio v6.24+).
+ * Retorna null sin errores si el endpoint no está disponible en el entorno actual.
+ * @param {string} token - Token Bearer.
+ * @param {string} idTransaccion
+ * @param {string} tipoIdentificacion - Tipo de documento (ej. "CC").
+ * @param {string} identificacion - Número de identificación.
+ * @returns {Promise<string|null>} URL de firma o null si el on-premise no está disponible.
  */
 async function generarUrlFirma(token, idTransaccion, tipoIdentificacion, identificacion) {
   const signioApiUrl = getSignioApiUrl();
-  
+
   console.log('=== Intentando generar URL de firma on-premise ===');
   console.log('ID Transacción:', idTransaccion);
   console.log('Tipo ID:', tipoIdentificacion);
   console.log('Documento:', identificacion);
-  
-  // Según documentación oficial de Signio (6.24)
+
   const requestBody = {
     transaction_id: idTransaccion,
-    document_type: tipoIdentificacion,  // Ej: CC
-    document: identificacion,            // Número de identificación
-    direct_signature: 1,                 // 1 = Direcciona directo al proceso de firma
-    op_token: 'SCREEN'                   // SCREEN = token en pantalla
+    document_type: tipoIdentificacion,
+    document: identificacion,
+    direct_signature: 1,
+    op_token: 'SCREEN'
   };
-  
+
   const endpoint = `${signioApiUrl}/envelope/onpremise/get-signed-url`;
   console.log('Endpoint:', endpoint);
-  
+
   try {
     const response = await fetch(endpoint, {
-      method: 'PUT',  // Según documentación oficial es PUT
+      method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
@@ -245,99 +261,179 @@ async function generarUrlFirma(token, idTransaccion, tipoIdentificacion, identif
     });
 
     console.log('Response status:', response.status);
-    
-    // Si es 404, el endpoint no existe en este ambiente
+
     if (response.status === 404) {
-      console.log('⚠️ Endpoint on-premise no disponible en este ambiente.');
-      console.log('Los firmantes recibirán el link de firma por EMAIL.');
-      return null;  // Retornar null para indicar que no hay URL on-premise
-    }
-    
-    const responseText = await response.text();
-    
-    // Si es HTML, error de servidor
-    if (responseText.startsWith('<!DOCTYPE') || responseText.startsWith('<html')) {
-      console.log('⚠️ Respuesta HTML - endpoint no disponible.');
+      console.log('Endpoint on-premise no disponible en este ambiente. Firma por EMAIL.');
       return null;
     }
-    
-    const data = JSON.parse(responseText);
-    
-    // Buscar URL en la respuesta
-    if (data.url) {
-      console.log('✅ URL de firma obtenida:', data.url);
-      return data.url;
+
+    const responseText = await response.text();
+
+    if (responseText.startsWith('<!DOCTYPE') || responseText.startsWith('<html')) {
+      console.log('Respuesta HTML inesperada — endpoint no disponible.');
+      return null;
     }
-    
-    // Algunos APIs retornan en campos alternativos
+
+    const data = JSON.parse(responseText);
+
+    if (data.url) return data.url;
     if (data.signed_url) return data.signed_url;
     if (data.data?.url) return data.data.url;
     if (data.link) return data.link;
-    
-    console.log('⚠️ Respuesta sin URL:', JSON.stringify(data));
+
+    console.log('Respuesta sin URL:', JSON.stringify(data));
     return null;
-    
+
   } catch (error) {
-    console.log('⚠️ Error al generar URL on-premise:', error.message);
-    console.log('Los firmantes recibirán el link de firma por EMAIL.');
+    console.log('Error al generar URL on-premise:', error.message);
     return null;
   }
 }
 
 /**
- * Obtiene información de una transacción
+ * Recupera el estado actual de una transacción de Signio.
+ * @param {string} token - Token Bearer.
+ * @param {string} idTransaccion
+ * @returns {Promise<Object>} Datos de la transacción desde Signio.
+ * @throws {Error} Si la API retorna un código distinto de cero.
  */
 async function obtenerTransaccion(token, idTransaccion) {
   const response = await fetch(`${getSignioApiUrl()}/transacciones/gestionar?id_transaccion=${idTransaccion}`, {
     method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
+    headers: { 'Authorization': `Bearer ${token}` }
   });
 
   const data = await response.json();
-  
   if (data.codigo !== '00') {
     throw new Error(`Error al obtener transacción: ${data.mensaje}`);
   }
-
   return data;
 }
 
-// ============================================
-// ENDPOINTS
-// ============================================
+/**
+ * Constantes de posición de firma predefinidas para páginas A4 (595 × 842 pt).
+ * El origen del eje Y está en la parte inferior de la página (sistema de coordenadas PDF).
+ */
+export const POSICIONES_FIRMA = {
+  ABAJO_IZQUIERDA: { pagina: 1, x: 50, y: 80, ancho: 150, alto: 50 },
+  ABAJO_CENTRO: { pagina: 1, x: 220, y: 80, ancho: 150, alto: 50 },
+  ABAJO_DERECHA: { pagina: 1, x: 400, y: 80, ancho: 150, alto: 50 },
+  MEDIO_IZQUIERDA: { pagina: 1, x: 50, y: 400, ancho: 150, alto: 50 },
+  MEDIO_CENTRO: { pagina: 1, x: 220, y: 400, ancho: 150, alto: 50 },
+  MEDIO_DERECHA: { pagina: 1, x: 400, y: 400, ancho: 150, alto: 50 },
+  ULTIMA_PAGINA_IZQUIERDA: (numPaginas) => ({ pagina: numPaginas, x: 50, y: 80, ancho: 150, alto: 50 }),
+  ULTIMA_PAGINA_DERECHA: (numPaginas) => ({ pagina: numPaginas, x: 400, y: 80, ancho: 150, alto: 50 }),
+};
+
+/**
+ * Orquesta el flujo completo de firma en Signio: crea una transacción, carga el PDF,
+ * registra y vincula todos los firmantes, distribuye el sobre e intenta obtener una
+ * URL de firma on-premise para el firmante principal.
+ *
+ * @param {Object} params
+ * @param {string} params.nombre_documento - Nombre visible del documento.
+ * @param {string} [params.external_id] - ID de referencia local; por defecto `doc_<timestamp>`.
+ * @param {Buffer|string} params.pdf - PDF como Buffer o cadena base64.
+ * @param {string} [params.nombre_archivo] - Nombre del archivo PDF; por defecto `documento.pdf`.
+ * @param {{ nombre: string, tipo_identificacion?: string, identificacion: string, email: string, celular?: string, rol?: string, posicion_firma?: object }} params.firmante_principal
+ * @param {Array<{ nombre: string, identificacion: string, email: string, posicion_firma?: object }>} [params.firmantes_externos=[]]
+ * @returns {Promise<{ success: boolean, id_transaccion?: string, url_firma?: string|null, firma_por_email?: boolean, mensaje?: string, error?: string }>}
+ */
+export async function enviarDocumentoAFirmar({
+  nombre_documento,
+  external_id,
+  pdf,
+  nombre_archivo,
+  firmante_principal,
+  firmantes_externos = []
+}) {
+  try {
+    const token = await getSignioToken();
+
+    const idTransaccion = await crearTransaccion(
+      token,
+      nombre_documento,
+      external_id || `doc_${Date.now()}`
+    );
+
+    const pdfBuffer = Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf, 'base64');
+
+    let numPaginas = 1;
+    try {
+      const pdfDoc = await PDFDocument.load(pdfBuffer);
+      numPaginas = pdfDoc.getPageCount();
+      console.log(`PDF tiene ${numPaginas} página(s)`);
+    } catch (pdfErr) {
+      console.log('No se pudo leer el PDF para contar páginas, usando página 1');
+    }
+
+    const idDocumento = await cargarDocumento(
+      token,
+      idTransaccion,
+      pdfBuffer,
+      nombre_archivo || 'documento.pdf'
+    );
+
+    const idFirmantePrincipal = await registrarFirmante(token, idTransaccion, firmante_principal, 1);
+
+    const posicionPrincipal = firmante_principal.posicion_firma ||
+      { pagina: numPaginas, x: 50, y: 80, ancho: 150, alto: 50 };
+    await vincularFirmanteDocumento(token, idTransaccion, idFirmantePrincipal, idDocumento, posicionPrincipal);
+
+    const posicionesExternas = [
+      { pagina: numPaginas, x: 400, y: 80, ancho: 150, alto: 50 },
+      { pagina: numPaginas, x: 220, y: 80, ancho: 150, alto: 50 },
+      { pagina: numPaginas, x: 50, y: 160, ancho: 150, alto: 50 },
+      { pagina: numPaginas, x: 400, y: 160, ancho: 150, alto: 50 }
+    ];
+
+    for (let i = 0; i < firmantes_externos.length; i++) {
+      const firmante = firmantes_externos[i];
+      const idFirmante = await registrarFirmante(token, idTransaccion, firmante, i + 2);
+      const posicionFirmante = firmante.posicion_firma || posicionesExternas[i] || posicionesExternas[0];
+      await vincularFirmanteDocumento(token, idTransaccion, idFirmante, idDocumento, posicionFirmante);
+    }
+
+    await distribuirTransaccion(token, idTransaccion);
+
+    const urlFirma = await generarUrlFirma(
+      token,
+      idTransaccion,
+      firmante_principal.tipo_identificacion || 'CC',
+      firmante_principal.identificacion
+    );
+
+    const mensaje = urlFirma
+      ? 'Documento listo para firma. Use la URL proporcionada.'
+      : 'Documento enviado a firma. Todos los firmantes recibirán un email con el enlace para firmar.';
+
+    return {
+      success: true,
+      id_transaccion: idTransaccion,
+      url_firma: urlFirma,
+      firma_por_email: !urlFirma,
+      mensaje
+    };
+
+  } catch (error) {
+    console.error('Error en enviarDocumentoAFirmar:', error);
+    return { success: false, error: error.message };
+  }
+}
 
 /**
  * POST /signio/enviar-firma
- * 
- * Crea una transacción completa y devuelve el link de firma para el operario
- * 
- * Body esperado:
- * {
- *   nombre_documento: "Permiso de Trabajo - 2026-01-26",
- *   external_id: "permiso_trabajo_123",
- *   pdf_base64: "JVBERi0xLjQK...",    // PDF en base64
- *   nombre_archivo: "permiso_trabajo.pdf",
- *   firmante_principal: {
- *     nombre: "Juan Pérez",
- *     tipo_identificacion: "CC",
- *     identificacion: "123456789",
- *     email: "juan@email.com",
- *     celular: "573001234567",
- *     rol: "operario"
- *   },
- *   firmantes_externos: [
- *     {
- *       nombre: "Carlos Rodríguez",
- *       tipo_identificacion: "CC",
- *       identificacion: "987654321",
- *       email: "carlos@obra.com",
- *       celular: "573009876543",
- *       rol: "jefe_obra"
- *     }
- *   ]
- * }
+ * Crea una transacción completa de firma en Signio a partir de un PDF codificado en base64.
+ *
+ * @body {{
+ *   nombre_documento: string,
+ *   external_id?: string,
+ *   pdf_base64: string,
+ *   nombre_archivo?: string,
+ *   firmante_principal: { nombre: string, tipo_identificacion?: string, identificacion: string, email: string, celular?: string, rol?: string },
+ *   firmantes_externos?: Array<{ nombre: string, identificacion: string, email: string, celular?: string, rol?: string }>
+ * }}
+ * @returns {{ success: boolean, id_transaccion: string, url_firma: string|null, mensaje: string }}
  */
 router.post('/enviar-firma', async (req, res) => {
   try {
@@ -350,7 +446,6 @@ router.post('/enviar-firma', async (req, res) => {
       firmantes_externos = []
     } = req.body;
 
-    // Validaciones
     if (!nombre_documento || !pdf_base64 || !firmante_principal) {
       return res.status(400).json({
         error: 'Faltan campos requeridos: nombre_documento, pdf_base64, firmante_principal'
@@ -363,60 +458,27 @@ router.post('/enviar-firma', async (req, res) => {
       });
     }
 
-    // 1. Obtener token
     const token = await getSignioToken();
-
-    // 2. Crear transacción
-    const idTransaccion = await crearTransaccion(
-      token,
-      nombre_documento,
-      external_id || `doc_${Date.now()}`
-    );
-
-    // 3. Cargar documento PDF
+    const idTransaccion = await crearTransaccion(token, nombre_documento, external_id || `doc_${Date.now()}`);
     const pdfBuffer = Buffer.from(pdf_base64, 'base64');
-    const idDocumento = await cargarDocumento(
-      token,
-      idTransaccion,
-      pdfBuffer,
-      nombre_archivo || 'documento.pdf'
-    );
+    const idDocumento = await cargarDocumento(token, idTransaccion, pdfBuffer, nombre_archivo || 'documento.pdf');
 
-    // 4. Registrar firmante principal (orden 1)
-    const idFirmantePrincipal = await registrarFirmante(
-      token,
-      idTransaccion,
-      firmante_principal,
-      1
-    );
-
-    // 5. Vincular firmante principal al documento
+    const idFirmantePrincipal = await registrarFirmante(token, idTransaccion, firmante_principal, 1);
     await vincularFirmanteDocumento(token, idTransaccion, idFirmantePrincipal, idDocumento);
 
-    // 6. Registrar y vincular firmantes externos
     for (let i = 0; i < firmantes_externos.length; i++) {
       const firmante = firmantes_externos[i];
-      
       if (!firmante.nombre || !firmante.identificacion || !firmante.email) {
         return res.status(400).json({
           error: `Firmante externo ${i + 1} debe tener: nombre, identificacion, email`
         });
       }
-
-      const idFirmante = await registrarFirmante(
-        token,
-        idTransaccion,
-        firmante,
-        i + 2 // Orden 2, 3, 4...
-      );
-
+      const idFirmante = await registrarFirmante(token, idTransaccion, firmante, i + 2);
       await vincularFirmanteDocumento(token, idTransaccion, idFirmante, idDocumento);
     }
 
-    // 7. Distribuir transacción (envía emails a externos)
     await distribuirTransaccion(token, idTransaccion);
 
-    // 8. Generar URL de firma para el firmante principal
     const urlFirma = await generarUrlFirma(
       token,
       idTransaccion,
@@ -424,7 +486,6 @@ router.post('/enviar-firma', async (req, res) => {
       firmante_principal.identificacion
     );
 
-    // Respuesta exitosa
     res.json({
       success: true,
       id_transaccion: idTransaccion,
@@ -434,29 +495,23 @@ router.post('/enviar-firma', async (req, res) => {
 
   } catch (error) {
     console.error('Error en /signio/enviar-firma:', error);
-    res.status(500).json({
-      error: 'Error al procesar la firma',
-      detalle: error.message
-    });
+    res.status(500).json({ error: 'Error al procesar la firma', detalle: error.message });
   }
 });
 
 /**
  * POST /signio/webhook
- * 
- * Recibe notificaciones de Signio cuando un documento cambia de estado
+ * Recibe notificaciones de cambio de estado de Signio y hace upsert del registro en `signio_documentos`.
+ * Siempre responde 200 para evitar reintentos de Signio, incluso ante errores internos.
  */
 router.post('/webhook', async (req, res) => {
   try {
     const payload = req.body;
-    
     console.log('Webhook de Signio recibido:', JSON.stringify(payload, null, 2));
 
     const { id_transaccion, external_id, estado, documentos } = payload;
 
-    // Guardar en base de datos el estado del documento
     if (global.db && id_transaccion) {
-      // Crear tabla si no existe
       await global.db.query(`
         CREATE TABLE IF NOT EXISTS signio_documentos (
           id SERIAL PRIMARY KEY,
@@ -468,79 +523,69 @@ router.post('/webhook', async (req, res) => {
         )
       `);
 
-      // Insertar o actualizar
       await global.db.query(`
         INSERT INTO signio_documentos (id_transaccion, external_id, estado, documentos, fecha_actualizacion)
         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
-        ON CONFLICT (id_transaccion) 
+        ON CONFLICT (id_transaccion)
         DO UPDATE SET estado = $3, documentos = $4, fecha_actualizacion = CURRENT_TIMESTAMP
       `, [id_transaccion, external_id, estado, JSON.stringify(documentos)]);
 
       console.log(`Documento ${id_transaccion} actualizado a estado: ${estado}`);
     }
 
-    // Responder 200 OK para confirmar recepción
     res.status(200).json({ received: true });
 
   } catch (error) {
     console.error('Error en webhook de Signio:', error);
-    // Aún así responder 200 para que Signio no reintente
     res.status(200).json({ received: true, error: error.message });
   }
 });
 
 /**
  * GET /signio/estado/:id_transaccion
- * 
- * Consulta el estado de una transacción
+ * Retorna el estado actual de una transacción de firma.
+ * Consulta primero la BD local; si no hay datos, hace una llamada en vivo a la API de Signio.
+ * @param {string} id_transaccion
  */
 router.get('/estado/:id_transaccion', async (req, res) => {
   try {
     const { id_transaccion } = req.params;
 
-    // Primero buscar en nuestra base de datos
     if (global.db) {
       const result = await global.db.query(
         'SELECT * FROM signio_documentos WHERE id_transaccion = $1',
         [id_transaccion]
       );
-
       if (result.rows.length > 0) {
         return res.json(result.rows[0]);
       }
     }
 
-    // Si no está en BD, consultar a Signio directamente
     const token = await getSignioToken();
     const transaccion = await obtenerTransaccion(token, id_transaccion);
-
     res.json(transaccion);
 
   } catch (error) {
     console.error('Error al consultar estado:', error);
-    res.status(500).json({
-      error: 'Error al consultar estado',
-      detalle: error.message
-    });
+    res.status(500).json({ error: 'Error al consultar estado', detalle: error.message });
   }
 });
 
 /**
  * GET /signio/documento/:id_transaccion
- * 
- * Obtiene los links de descarga de los documentos firmados
+ * Retorna los enlaces de descarga del documento firmado para una transacción.
+ * Consulta primero la BD local; si no hay datos, hace una llamada en vivo a la API de Signio.
+ * @param {string} id_transaccion
  */
 router.get('/documento/:id_transaccion', async (req, res) => {
   try {
     const { id_transaccion } = req.params;
 
-    // Buscar en base de datos
     if (global.db) {
       const result = await global.db.query(
         'SELECT * FROM signio_documentos WHERE id_transaccion = $1',
         [id_transaccion]
       );
-
       if (result.rows.length > 0 && result.rows[0].documentos) {
         return res.json({
           id_transaccion,
@@ -550,34 +595,24 @@ router.get('/documento/:id_transaccion', async (req, res) => {
       }
     }
 
-    // Si no está, consultar a Signio
     const token = await getSignioToken();
     const transaccion = await obtenerTransaccion(token, id_transaccion);
-
-    res.json({
-      id_transaccion,
-      estado: transaccion.estado,
-      documentos: transaccion.documentos
-    });
+    res.json({ id_transaccion, estado: transaccion.estado, documentos: transaccion.documentos });
 
   } catch (error) {
     console.error('Error al obtener documento:', error);
-    res.status(500).json({
-      error: 'Error al obtener documento',
-      detalle: error.message
-    });
+    res.status(500).json({ error: 'Error al obtener documento', detalle: error.message });
   }
 });
 
 /**
  * GET /signio/listar
- * 
- * Lista las transacciones por estado
+ * Lista las transacciones de Signio filtradas por estado.
+ * @query {number} estado - 0: todas, 2: pendientes, 3: firmadas, 4: rechazadas.
  */
 router.get('/listar', async (req, res) => {
   try {
-    const { estado } = req.query; // 0: Todos, 2: Pendientes, 3: Firmados, 4: Rechazados
-
+    const { estado } = req.query;
     const token = await getSignioToken();
 
     const response = await fetch(`${getSignioApiUrl()}/transacciones/listar`, {
@@ -586,192 +621,20 @@ router.get('/listar', async (req, res) => {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify({
-        estado: parseInt(estado) || 0
-      })
+      body: JSON.stringify({ estado: parseInt(estado) || 0 })
     });
 
     const data = await response.json();
-
     if (data.codigo !== '00') {
       throw new Error(data.mensaje);
     }
 
-    res.json({
-      transacciones: data.transacciones
-    });
+    res.json({ transacciones: data.transacciones });
 
   } catch (error) {
     console.error('Error al listar transacciones:', error);
-    res.status(500).json({
-      error: 'Error al listar transacciones',
-      detalle: error.message
-    });
+    res.status(500).json({ error: 'Error al listar transacciones', detalle: error.message });
   }
 });
-
-/**
- * Posiciones de firma predefinidas para página A4 (595 x 842 puntos)
- * Coordenadas X van de izquierda a derecha (0 a 595)
- * Coordenadas Y van de ABAJO hacia ARRIBA (0 es el fondo de la página)
- */
-export const POSICIONES_FIRMA = {
-  // Firmas en la parte inferior de la página
-  ABAJO_IZQUIERDA: { pagina: 1, x: 50, y: 80, ancho: 150, alto: 50 },
-  ABAJO_CENTRO: { pagina: 1, x: 220, y: 80, ancho: 150, alto: 50 },
-  ABAJO_DERECHA: { pagina: 1, x: 400, y: 80, ancho: 150, alto: 50 },
-  
-  // Firmas en el medio de la página
-  MEDIO_IZQUIERDA: { pagina: 1, x: 50, y: 400, ancho: 150, alto: 50 },
-  MEDIO_CENTRO: { pagina: 1, x: 220, y: 400, ancho: 150, alto: 50 },
-  MEDIO_DERECHA: { pagina: 1, x: 400, y: 400, ancho: 150, alto: 50 },
-  
-  // Para documentos de varias páginas (última página)
-  ULTIMA_PAGINA_IZQUIERDA: (numPaginas) => ({ pagina: numPaginas, x: 50, y: 80, ancho: 150, alto: 50 }),
-  ULTIMA_PAGINA_DERECHA: (numPaginas) => ({ pagina: numPaginas, x: 400, y: 80, ancho: 150, alto: 50 }),
-};
-
-/**
- * Función helper para enviar un documento a firmar desde otros routes
- * 
- * @param {Object} params
- * @param {string} params.nombre_documento - Nombre del documento
- * @param {string} params.external_id - ID interno para identificar el documento
- * @param {Buffer|string} params.pdf - PDF como Buffer o base64
- * @param {string} params.nombre_archivo - Nombre del archivo PDF
- * @param {Object} params.firmante_principal - Datos del firmante principal
- * @param {Object} params.firmante_principal.posicion_firma - Posición de firma (opcional) { pagina, x, y, ancho, alto }
- * @param {Array} params.firmantes_externos - Array de firmantes externos (cada uno puede tener posicion_firma)
- * 
- * @returns {Object} { success, id_transaccion, url_firma, mensaje }
- * 
- * @example
- * // Ejemplo con posiciones de firma
- * await enviarDocumentoAFirmar({
- *   nombre_documento: "Checklist",
- *   pdf: pdfBuffer,
- *   firmante_principal: {
- *     nombre: "Juan",
- *     identificacion: "123",
- *     email: "juan@test.com",
- *     posicion_firma: { pagina: 1, x: 50, y: 80, ancho: 150, alto: 50 }
- *   },
- *   firmantes_externos: [{
- *     nombre: "Pedro",
- *     identificacion: "456",
- *     email: "pedro@test.com",
- *     posicion_firma: POSICIONES_FIRMA.ABAJO_DERECHA
- *   }]
- * });
- */
-export async function enviarDocumentoAFirmar({
-  nombre_documento,
-  external_id,
-  pdf,
-  nombre_archivo,
-  firmante_principal,
-  firmantes_externos = []
-}) {
-  try {
-    // 1. Obtener token
-    const token = await getSignioToken();
-
-    // 2. Crear transacción
-    const idTransaccion = await crearTransaccion(
-      token,
-      nombre_documento,
-      external_id || `doc_${Date.now()}`
-    );
-
-    // 3. Preparar PDF (si viene en base64, convertir a Buffer)
-    const pdfBuffer = Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf, 'base64');
-    
-    // 3.1 Detectar número de páginas del PDF
-    let numPaginas = 1;
-    try {
-      const pdfDoc = await PDFDocument.load(pdfBuffer);
-      numPaginas = pdfDoc.getPageCount();
-      console.log(`PDF tiene ${numPaginas} página(s)`);
-    } catch (pdfErr) {
-      console.log('No se pudo leer el PDF para contar páginas, usando página 1');
-    }
-    
-    // 4. Cargar documento PDF
-    const idDocumento = await cargarDocumento(
-      token,
-      idTransaccion,
-      pdfBuffer,
-      nombre_archivo || 'documento.pdf'
-    );
-
-    // 5. Registrar firmante principal (orden 1)
-    const idFirmantePrincipal = await registrarFirmante(
-      token,
-      idTransaccion,
-      firmante_principal,
-      1
-    );
-
-    // 6. Vincular firmante principal al documento (última página, abajo izquierda)
-    const posicionPrincipal = firmante_principal.posicion_firma || 
-      { pagina: numPaginas, x: 50, y: 80, ancho: 150, alto: 50 }; // Última página, abajo izquierda
-    await vincularFirmanteDocumento(token, idTransaccion, idFirmantePrincipal, idDocumento, posicionPrincipal);
-
-    // 7. Registrar y vincular firmantes externos
-    for (let i = 0; i < firmantes_externos.length; i++) {
-      const firmante = firmantes_externos[i];
-      
-      const idFirmante = await registrarFirmante(
-        token,
-        idTransaccion,
-        firmante,
-        i + 2 // Orden 2, 3, 4...
-      );
-
-      // Posiciones en la última página: derecha para el primero, centro para el segundo
-      const posicionesExternas = [
-        { pagina: numPaginas, x: 400, y: 80, ancho: 150, alto: 50 },  // Última página, abajo derecha
-        { pagina: numPaginas, x: 220, y: 80, ancho: 150, alto: 50 },  // Última página, abajo centro
-        { pagina: numPaginas, x: 50, y: 160, ancho: 150, alto: 50 },  // Última página, arriba izquierda
-        { pagina: numPaginas, x: 400, y: 160, ancho: 150, alto: 50 }  // Última página, arriba derecha
-      ];
-      const posicionFirmante = firmante.posicion_firma || posicionesExternas[i] || posicionesExternas[0];
-      
-      await vincularFirmanteDocumento(token, idTransaccion, idFirmante, idDocumento, posicionFirmante);
-    }
-
-    // 8. Distribuir transacción (envía emails a externos)
-    await distribuirTransaccion(token, idTransaccion);
-
-    // 9. Intentar generar URL de firma on-premise para el firmante principal
-    // Si no está disponible, los firmantes recibirán email con el link
-    const urlFirma = await generarUrlFirma(
-      token,
-      idTransaccion,
-      firmante_principal.tipo_identificacion || 'CC',
-      firmante_principal.identificacion
-    );
-
-    // Mensaje según si hay URL on-premise o no
-    const mensaje = urlFirma 
-      ? 'Documento listo para firma. Use la URL proporcionada.'
-      : 'Documento enviado a firma. Todos los firmantes recibirán un email con el enlace para firmar.';
-
-    return {
-      success: true,
-      id_transaccion: idTransaccion,
-      url_firma: urlFirma,  // Puede ser null si on-premise no está disponible
-      firma_por_email: !urlFirma,  // Indicador de que la firma será por email
-      mensaje: mensaje
-    };
-
-  } catch (error) {
-    console.error('Error en enviarDocumentoAFirmar:', error);
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-}
 
 export default router;

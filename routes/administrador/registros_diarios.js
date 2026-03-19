@@ -3,7 +3,6 @@ import ExcelJS from 'exceljs';
 import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
 const router = Router();
 
-// Middleware para verificar si la base de datos está disponible
 router.use((req, res, next) => {
   if (!global.db) {
     console.error("DB no disponible en middleware de registros diarios");
@@ -12,24 +11,11 @@ router.use((req, res, next) => {
   next();
 });
 
-// usar helpers compartidos para manejo de fechas (evita shift TZ)
-
-// Helper: devuelve un map { [empresa_id]: nombre }
-async function getEmpresasMap(db, ids) {
-  const out = {};
-  try {
-    const idsArr = [...new Set((ids || []).filter(Boolean))];
-    if (!idsArr.length) return out;
-    const q = `SELECT id, nombre FROM empresas WHERE id = ANY($1::int[])`;
-    const r = await db.query(q, [idsArr]);
-    for (const row of r.rows || []) out[row.id] = row.nombre || String(row.id);
-  } catch (err) {
-    console.error('Error getEmpresasMap:', err);
-  }
-  return out;
-}
-
-// Configuración de registros por empresa
+/**
+ * Mapeo de tablas de formularios a rastrear por empresa.
+ * Cada entrada define qué tabla consultar, junto con las columnas de nombre del operador y fecha.
+ * @type {Record<number, Array<{ tabla: string, campoNombre: string, campoFecha: string }>>}
+ */
 const REGISTROS_POR_EMPRESA = {
   1: [
     { tabla: 'chequeo_alturas', campoNombre: 'nombre_operador', campoFecha: 'fecha_servicio' },
@@ -60,21 +46,47 @@ const REGISTROS_POR_EMPRESA = {
   ]
 };
 
-// POST /buscar -> filtros en body JSON (para visualización)
+/**
+ * Obtiene un mapa { [empresa_id]: nombre } para un conjunto de IDs de empresa.
+ * Retorna un objeto vacío si la consulta falla.
+ * @param {import('pg').Pool} db
+ * @param {number[]} ids
+ * @returns {Promise<Record<number, string>>}
+ */
+async function getEmpresasMap(db, ids) {
+  const out = {};
+  try {
+    const idsArr = [...new Set((ids || []).filter(Boolean))];
+    if (!idsArr.length) return out;
+    const q = `SELECT id, nombre FROM empresas WHERE id = ANY($1::int[])`;
+    const r = await db.query(q, [idsArr]);
+    for (const row of r.rows || []) out[row.id] = row.nombre || String(row.id);
+  } catch (err) {
+    console.error('Error getEmpresasMap:', err);
+  }
+  return out;
+}
+
+/**
+ * POST /administrador/registros_diarios/buscar
+ * Retorna un resumen de cumplimiento por trabajador y por fecha, indicando qué tablas de formularios
+ * se han llenado y cuáles siguen pendientes, dentro del rango de fechas solicitado.
+ * Los trabajadores se resuelven desde la tabla `trabajadores`. Los resultados se paginan por fecha.
+ * @body {{ nombre?: string, fecha_inicio?: string, fecha_fin?: string, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array<{ fecha: string, nombre: string, empresa: string, nombre_proyecto: string, total_registros: number, formatos_llenos: string[], formatos_faltantes: string[] }> }}
+ * @throws {404} Si el trabajador especificado no se encuentra.
+ */
 router.post('/buscar', async (req, res) => {
   const db = global.db;
   if (!db) {
     return res.status(500).json({ error: "DB no disponible" });
   }
-  console.log('POST /api/buscar payload:', req.body);
 
   try {
     const { nombre, fecha_inicio, fecha_fin, limit = 200, offset = 0 } = req.body || {};
     const startDate = formatDateOnly(fecha_inicio);
     const endDate = formatDateOnly(fecha_fin) || todayDateString();
 
-    // Obtener lista de trabajadores a procesar: si se recibe `nombre` se procesa solo ese,
-    // si no se recibe, se procesan todos los trabajadores de la tabla.
     let trabajadoresList = [];
     if (nombre) {
       const trabajadorResult = await db.query(
@@ -82,7 +94,7 @@ router.post('/buscar', async (req, res) => {
         [nombre]
       );
       if (trabajadorResult.rows.length === 0) {
-        return res.status(404).json({ 
+        return res.status(404).json({
           error: "Trabajador no encontrado",
           nombre_buscado: nombre
         });
@@ -97,28 +109,20 @@ router.post('/buscar', async (req, res) => {
       return res.status(404).json({ error: 'No se encontraron trabajadores para procesar' });
     }
 
-
-
-    // Obtener nombres de empresas para reemplazar empresa_id por nombre (para /buscar)
     const empresasMap = await getEmpresasMap(db, trabajadoresList.map(t => t.empresa_id));
 
-
-    // Generar array de fechas en el rango
     const fechas = [];
     const inicio = parseDateLocal(startDate);
     const fin = parseDateLocal(endDate);
-    
+
     for (let d = new Date(inicio); d <= fin; d.setDate(d.getDate() + 1)) {
       fechas.push(formatDateOnly(new Date(d)));
     }
 
-    // Limitar fechas según limit y offset
     const fechasPaginadas = fechas.slice(offset, offset + parseInt(limit));
-
-    // Verificar cada trabajador y cada fecha - optimizado por empresa
     const resultadosPorFecha = [];
 
-    // Cache de columna de proyecto por tabla (null si no existe)
+    // Caché: { [tabla]: string|null } — memoriza la columna de nombre de proyecto detectada por tabla.
     const nombreProyectoCol = {};
 
     for (const empresa_id_val of [...new Set(trabajadoresList.map(t => t.empresa_id))]) {
@@ -126,18 +130,14 @@ router.post('/buscar', async (req, res) => {
       const registrosAsignados = REGISTROS_POR_EMPRESA[empresa_id_val] || [];
       if (!registrosAsignados.length) continue;
 
-      // Preparar lista de nombres en minúscula y sin espacios para comparaciones más rápidas
       const lowerNames = trabajadoresDeEmpresa.map(n => String(n).trim().toLowerCase());
 
-      // Construir UNION ALL a partir de las tablas asignadas
       let pr = 0;
       const unionParts = [];
       for (const registro of registrosAsignados) {
         const { tabla, campoNombre, campoFecha } = registro;
-        // comprobar si la tabla tiene columna nombre_proyecto (cacheada)
         if (!(tabla in nombreProyectoCol)) {
           try {
-            // probar varios nombres comunes de columna de proyecto
             const candidates = ['nombre_proyecto','nombre_obra','obra','obra_nombre'];
             let found = null;
             for (const c of candidates) {
@@ -146,10 +146,10 @@ router.post('/buscar', async (req, res) => {
                 const colR = await db.query(colQ, [tabla, c]);
                 if (colR.rows && colR.rows.length > 0) { found = c; break; }
               } catch (e) {
-                // ignore
+                // ignorar error al sondear columna
               }
             }
-            nombreProyectoCol[tabla] = found; // e.g. 'nombre_proyecto' or null
+            nombreProyectoCol[tabla] = found;
           } catch (err) {
             nombreProyectoCol[tabla] = null;
           }
@@ -167,22 +167,16 @@ router.post('/buscar', async (req, res) => {
 
       const finalQuery = `SELECT nombre, fecha, COALESCE((ARRAY_AGG(nombre_proyecto ORDER BY pr) FILTER (WHERE nombre_proyecto IS NOT NULL))[1],'') AS nombre_proyecto, ARRAY_AGG(DISTINCT formato) AS formatos_llenos, COUNT(*) AS total_registros FROM ( ${unionParts.join(' UNION ALL ')} ) t GROUP BY nombre, fecha ORDER BY nombre, fecha`;
 
-      // Ejecutar la consulta una sola vez por empresa
       let aggregated = [];
       try {
         console.log(`[REGISTROS_DIARIOS] Ejecutando consulta agregada empresa=${empresa_id_val}`);
-        console.log(finalQuery);
-        console.log('params:', [startDate, endDate, lowerNames.slice(0,20)]);
         const agR = await db.query(finalQuery, [startDate, endDate, lowerNames]);
         aggregated = agR.rows || [];
-        console.log(`[REGISTROS_DIARIOS] empresa=${empresa_id_val} filas agregadas=${aggregated.length}`);
-        if (aggregated.length) console.log('ejemplo fila:', aggregated[0]);
       } catch (err) {
         console.error('Error en consulta agregada por empresa', empresa_id_val, err);
         aggregated = [];
       }
 
-      // Mapear resultados para acceso rápido
       const map = new Map();
       for (const r of aggregated) {
         const fechaKey = formatDateOnly(r.fecha);
@@ -190,7 +184,6 @@ router.post('/buscar', async (req, res) => {
         map.set(key, { total_registros: parseInt(r.total_registros || 0), nombre_proyecto: r.nombre_proyecto || '', formatos_llenos: r.formatos_llenos || [] });
       }
 
-      // Rellenar fechas (paginated)
       const expectedFormatos = registrosAsignados.map(r => r.tabla);
       for (const nombreTrabajador of trabajadoresDeEmpresa) {
         for (const fecha of fechasPaginadas) {
@@ -207,30 +200,32 @@ router.post('/buscar', async (req, res) => {
 
   } catch (error) {
     console.error("Error en /registros_diarios/buscar:", error);
-    res.status(500).json({ 
-      error: "Error al buscar registros diarios", 
-      detalle: error.message 
+    res.status(500).json({
+      error: "Error al buscar registros diarios",
+      detalle: error.message
     });
   }
 });
 
-// POST /descargar -> genera Excel con datos de registros diarios
+/**
+ * POST /administrador/registros_diarios/descargar
+ * Envía el mismo resumen de cumplimiento que `/buscar` como un archivo XLSX formateado.
+ * Soporta hasta 10,000 fechas. Usa el escritor de streaming de ExcelJS para evitar buffering.
+ * @body {{ nombre?: string, fecha_inicio?: string, fecha_fin?: string, limit?: number }}
+ * @returns {Buffer} Adjunto del libro de Excel (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet)
+ * @throws {404} Si el trabajador especificado no se encuentra.
+ */
 router.post('/descargar', async (req, res) => {
   const db = global.db;
   if (!db) {
     return res.status(500).json({ error: "DB no disponible" });
   }
-  console.log('POST /api/descargar payload:', req.body);
 
   try {
     const { nombre, fecha_inicio, fecha_fin, limit = 10000 } = req.body || {};
     const startDate = formatDateOnly(fecha_inicio);
     const endDate = formatDateOnly(fecha_fin) || todayDateString();
 
-    console.log(`[DESCARGAR REGISTROS DIARIOS] Usuario: ${nombre || '[TODOS]'}, Rango: ${startDate} - ${endDate}`);
-
-    // Obtener lista de trabajadores a procesar: si se recibe `nombre` se procesa solo ese,
-    // si no se recibe, se procesan todos los trabajadores de la tabla.
     let trabajadoresList = [];
     if (nombre) {
       const trabajadorResult = await db.query(
@@ -238,7 +233,7 @@ router.post('/descargar', async (req, res) => {
         [nombre]
       );
       if (trabajadorResult.rows.length === 0) {
-        return res.status(404).json({ 
+        return res.status(404).json({
           error: "Trabajador no encontrado",
           nombre_buscado: nombre
         });
@@ -253,24 +248,18 @@ router.post('/descargar', async (req, res) => {
       return res.status(404).json({ error: 'No se encontraron trabajadores para procesar' });
     }
 
-    // Obtener nombres de empresas para reemplazar empresa_id por nombre (para /descargar)
     const empresasMap = await getEmpresasMap(db, trabajadoresList.map(t => t.empresa_id));
 
-    // Generar array de fechas en el rango
     const fechas = [];
     const inicio = parseDateLocal(startDate);
     const fin = parseDateLocal(endDate);
-    
+
     for (let d = new Date(inicio); d <= fin; d.setDate(d.getDate() + 1)) {
       fechas.push(formatDateOnly(new Date(d)));
     }
 
-    // Limitar cantidad de fechas
     const fechasLimitadas = fechas.slice(0, Math.min(parseInt(limit), 10000));
 
-    console.log(`[DESCARGAR REGISTROS DIARIOS] Total de fechas a procesar: ${fechasLimitadas.length}`);
-
-    // Verificar cada trabajador y cada fecha - optimizado por empresa (similar a /buscar)
     const resultadosPorFecha = [];
     const nombreProyectoCol = {};
 
@@ -294,7 +283,7 @@ router.post('/descargar', async (req, res) => {
                 const colR = await db.query(colQ, [tabla, c]);
                 if (colR.rows && colR.rows.length > 0) { found = c; break; }
               } catch (e) {
-                // ignore
+                // ignorar error al sondear columna
               }
             }
             nombreProyectoCol[tabla] = found;
@@ -318,12 +307,8 @@ router.post('/descargar', async (req, res) => {
       let aggregated = [];
       try {
         console.log(`[REGISTROS_DIARIOS][DESCARGAR] Ejecutando consulta agregada empresa=${empresa_id_val}`);
-        console.log(finalQuery);
-        console.log('params:', [startDate, endDate, lowerNames.slice(0,20)]);
         const agR = await db.query(finalQuery, [startDate, endDate, lowerNames]);
         aggregated = agR.rows || [];
-        console.log(`[REGISTROS_DIARIOS][DESCARGAR] empresa=${empresa_id_val} filas agregadas=${aggregated.length}`);
-        if (aggregated.length) console.log('ejemplo fila:', aggregated[0]);
       } catch (err) {
         console.error('Error en consulta agregada por empresa', empresa_id_val, err);
         aggregated = [];
@@ -348,7 +333,6 @@ router.post('/descargar', async (req, res) => {
       }
     }
 
-    // Crear el Excel usando streaming para evitar buffers grandes
     const filenameUser = (typeof nombre === 'string' && nombre.trim()) ? nombre.replace(/\s+/g, '_') : 'todos';
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="registros_diarios_${filenameUser}_${startDate}_${endDate}.xlsx"`);
@@ -389,14 +373,13 @@ router.post('/descargar', async (req, res) => {
 
     console.log(`[DESCARGAR REGISTROS DIARIOS] Escribiendo ${written} filas en Excel (stream)`);
     await workbookWriter.commit();
-    console.log(`[DESCARGAR REGISTROS DIARIOS] Archivo enviado exitosamente (stream)`);
 
   } catch (error) {
     console.error("Error en /registros_diarios/descargar:", error);
     if (!res.headersSent) {
-      res.status(500).json({ 
-        error: "Error al generar archivo Excel", 
-        detalle: error.message 
+      res.status(500).json({
+        error: "Error al generar archivo Excel",
+        detalle: error.message
       });
     }
   }

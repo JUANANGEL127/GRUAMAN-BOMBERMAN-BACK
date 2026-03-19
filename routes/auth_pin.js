@@ -4,9 +4,20 @@ const router = express.Router();
 
 const SALT_ROUNDS = 10;
 
-// Rate limiter en memoria para /auth/pin/verify (sin dependencias externas)
+/**
+ * Estado del limitador de tasa en memoria indexado por dirección IP.
+ * Cada entrada: { count: number, resetAt: number (epoch ms) }
+ * @type {Map<string, { count: number, resetAt: number }>}
+ */
 const pinLoginAttempts = new Map();
 
+/**
+ * Aplica un límite de tasa de ventana deslizante de 10 intentos por IP cada 15 minutos.
+ * Escribe una respuesta 429 y retorna false si se supera el límite.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {boolean} True si la solicitud está dentro del límite, false si fue bloqueada.
+ */
 function checkPinRateLimit(req, res) {
   const ipKey = req.ip;
   const now = Date.now();
@@ -24,8 +35,12 @@ function checkPinRateLimit(req, res) {
   return true;
 }
 
-// GET /auth/pin/status?numero_identificacion=xxx
-// Devuelve si el usuario tiene PIN habilitado y si ya lo configuró
+/**
+ * GET /auth/pin/status
+ * Retorna si un trabajador tiene la autenticación por PIN habilitada y si el PIN ha sido configurado.
+ * @query {string} numero_identificacion
+ * @returns {{ pinHabilitado: boolean, pinConfigurado: boolean }}
+ */
 router.get("/status", async (req, res) => {
   const { numero_identificacion } = req.query;
   if (!numero_identificacion) {
@@ -50,9 +65,15 @@ router.get("/status", async (req, res) => {
   }
 });
 
-// POST /auth/pin/set
-// El usuario crea o cambia su propio PIN (solo si pin_habilitado = true)
-// Body: { numero_identificacion, pin }
+/**
+ * POST /auth/pin/set
+ * Crea o actualiza el PIN del trabajador autenticado. Requiere `pin_habilitado = true`.
+ * @body {{ numero_identificacion: string, pin: string }} El PIN debe ser numérico de 4 a 8 dígitos.
+ * @returns {{ success: boolean }}
+ * @throws {400} Si el formato del PIN es inválido.
+ * @throws {403} Si la autenticación por PIN no está habilitada para el trabajador.
+ * @throws {404} Si el trabajador no existe.
+ */
 router.post("/set", async (req, res) => {
   const { numero_identificacion, pin } = req.body;
   if (!numero_identificacion || !pin) {
@@ -84,16 +105,23 @@ router.post("/set", async (req, res) => {
   }
 });
 
-// POST /auth/pin/verify
-// Verifica el PIN del usuario para autenticación
-// Body: { numero_identificacion, pin }
+/**
+ * POST /auth/pin/verify
+ * Valida el PIN de un trabajador. Sujeto a limitación de tasa por IP (10 intentos / 15 min).
+ * Limpia el contador de límite de tasa al autenticarse exitosamente.
+ * @body {{ numero_identificacion: string, pin: string }}
+ * @returns {{ success: boolean }}
+ * @throws {400} Si el PIN aún no ha sido configurado (`requiereCrearPin: true`).
+ * @throws {401} Si el PIN es incorrecto.
+ * @throws {403} Si la autenticación por PIN no está habilitada para el trabajador.
+ * @throws {429} Si la IP ha superado el límite de tasa.
+ */
 router.post("/verify", async (req, res) => {
   const { numero_identificacion, pin } = req.body;
   if (!numero_identificacion || !pin) {
     return res.status(400).json({ error: "Faltan datos" });
   }
 
-  // Rate limiting: máximo 10 intentos por IP cada 15 minutos
   if (!checkPinRateLimit(req, res)) return;
 
   try {
@@ -116,7 +144,6 @@ router.post("/verify", async (req, res) => {
     if (!match) {
       return res.status(401).json({ success: false, error: "PIN incorrecto" });
     }
-    // Limpiar conteo de intentos al autenticarse con éxito
     pinLoginAttempts.delete(req.ip);
     res.json({ success: true });
   } catch (err) {

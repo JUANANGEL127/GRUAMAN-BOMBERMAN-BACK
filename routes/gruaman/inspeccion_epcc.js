@@ -3,18 +3,41 @@ import { enviarDocumentoAFirmar } from '../signio.js';
 import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = Router();
 
-// Middleware: verifica disponibilidad de la DB
 router.use((req, res, next) => {
   if (!global.db) return res.status(503).json({ error: "DB no disponible" });
   next();
 });
 
-// POST: guarda un registro de inspección EPCC
+/**
+ * Normaliza un valor verdadero/falso a la restricción "SI" | "NO" | "NA" esperada por la BD.
+ * @param {*} val
+ * @returns {"SI"|"NO"|"NA"}
+ */
+function normalizeOption(val) {
+  if (val === undefined || val === null) return "NA";
+  if (typeof val === "boolean") return val ? "SI" : "NO";
+  if (typeof val === "number") return val === 1 ? "SI" : (val === 0 ? "NO" : "NA");
+  if (typeof val === "string") {
+    const s = val.trim().toLowerCase();
+    if (["si","s","yes","y","1"].includes(s)) return "SI";
+    if (["no","n","not","0"].includes(s)) return "NO";
+    if (s === "" || ["na","n/a","none","null","undefined"].includes(s)) return "NA";
+    return "NA";
+  }
+  return "NA";
+}
+
+/**
+ * POST /gruaman/inspeccion_epcc
+ * Inserta un registro de inspección de equipo de protección personal contra caídas (EPCC).
+ * @body {{ nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, cargo: string, arnes: string, arrestador_caidas: string, mosqueton: string, eslinga_posicionamiento: string, eslinga_y_absorbedor: string, linea_vida: string, [field: string]: any }}
+ * @returns {{ message: string, id: number }}
+ * @throws {400} Si faltan campos requeridos.
+ */
 router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
 
-  // Campos obligatorios
   const required = [
     "nombre_cliente", "nombre_proyecto", "fecha_servicio", "nombre_operador", "cargo",
     "arnes", "arrestador_caidas", "mosqueton", "eslinga_posicionamiento", "eslinga_y_absorbedor", "linea_vida"
@@ -25,23 +48,9 @@ router.post("/", async (req, res) => {
   });
   if (faltantes.length) return res.status(400).json({ error: "Faltan campos requeridos", faltantes });
 
-  // Campos tipo opción
   const optionFields = new Set([
     "arnes", "arrestador_caidas", "mosqueton", "eslinga_posicionamiento", "eslinga_y_absorbedor", "linea_vida"
   ]);
-  function normalizeOption(val) {
-    if (val === undefined || val === null) return "NA";
-    if (typeof val === "boolean") return val ? "SI" : "NO";
-    if (typeof val === "number") return val === 1 ? "SI" : (val === 0 ? "NO" : "NA");
-    if (typeof val === "string") {
-      const s = val.trim().toLowerCase();
-      if (["si","s","yes","y","1"].includes(s)) return "SI";
-      if (["no","n","not","0"].includes(s)) return "NO";
-      if (s === "" || ["na","n/a","none","null","undefined"].includes(s)) return "NA";
-      return "NA";
-    }
-    return "NA";
-  }
 
   const fields = [
     "nombre_cliente","nombre_proyecto","fecha_servicio","nombre_operador","cargo",
@@ -68,7 +77,12 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET: lista los registros de inspección EPCC (últimos 200 por defecto)
+/**
+ * GET /gruaman/inspeccion_epcc
+ * Retorna los registros de inspección EPCC más recientes.
+ * @query {number} [limit=200]
+ * @returns {{ registros: Array }}
+ */
 router.get("/", async (req, res) => {
   const db = global.db;
   try {

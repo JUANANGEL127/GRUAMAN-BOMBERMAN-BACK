@@ -2,23 +2,37 @@ import { Router } from "express";
 import { formatDateOnly } from '../../helpers/dateUtils.js';
 const router = Router();
 
-// Middleware: verifica disponibilidad de la DB
 router.use((req, res, next) => {
   if (!global.db) return res.status(503).json({ error: "DB no disponible" });
   next();
 });
 
-// POST: guarda un registro de herramientas de mantenimiento
+/**
+ * Convierte un valor a un entero no negativo, con valor por defecto 0 para entradas vacías o nulas.
+ * @param {*} val
+ * @returns {number}
+ */
+function normalizeInteger(val) {
+  if (val === undefined || val === null || val === '') return 0;
+  const parsed = parseInt(val, 10);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * POST /bomberman/herramientas_mantenimiento
+ * Inserta un registro de inventario de herramientas de mantenimiento.
+ * Los campos requeridos incluyen el encabezado más las cantidades `_buena`/`_mala` de cada uno de los 16 ítems de herramientas.
+ * Los campos opcionales `_estado` se establecen en cadena vacía cuando se omiten.
+ * @body {{ nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, bomba_numero: string, empresa_id?: number, observaciones?: string, [item_buena: string]: number, [item_mala: string]: number, [item_estado: string]: string }}
+ * @returns {{ message: string, id: number }}
+ * @throws {400} Si falta algún campo requerido.
+ */
 router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
 
-  // Campos obligatorios: datos generales + cantidades buena/mala de los 16 items
   const required = [
-    // Datos generales
     "nombre_cliente", "nombre_proyecto", "fecha_servicio", "nombre_operador", "bomba_numero",
-
-    // Items (buena/mala)
     "copa_bristol_10mm_buena", "copa_bristol_10mm_mala",
     "extension_media_x12_a_buena", "extension_media_x12_a_mala",
     "palanca_media_x15_buena", "palanca_media_x15_mala",
@@ -37,7 +51,6 @@ router.post("/", async (req, res) => {
     "llave_expansiva_15_buena", "llave_expansiva_15_mala"
   ];
 
-  // Campos opcionales: empresa_id, observaciones y todos los _estado
   const optional = [
     "empresa_id",
     "observaciones",
@@ -59,27 +72,17 @@ router.post("/", async (req, res) => {
     "llave_expansiva_15_estado"
   ];
 
-  // Validar campos requeridos
   const faltantes = required.filter(k => body[k] === undefined || body[k] === null);
   if (faltantes.length) return res.status(400).json({ error: "Faltan campos requeridos", faltantes });
 
-  // Campos de tipo entero (cantidades buena/mala)
   const integerFields = new Set(required.filter(f => f.endsWith('_buena') || f.endsWith('_mala')));
 
-  function normalizeInteger(val) {
-    if (val === undefined || val === null || val === '') return 0;
-    const parsed = parseInt(val, 10);
-    return isNaN(parsed) ? 0 : parsed;
-  }
-
-  // Preparar campos y valores para la inserción (campos requeridos)
   const fields = [...required];
   const values = required.map(f => {
     if (integerFields.has(f)) return normalizeInteger(body[f]);
     return body[f];
   });
 
-  // Campos _estado: siempre incluirlos como string vacío si no llegaron
   const estadoFields = new Set([
     "copa_bristol_10mm_estado", "extension_media_x12_a_estado", "palanca_media_x15_estado",
     "llave_bristol_14_estado", "llave_11_estado", "llave_12_estado", "llave_13_estado",
@@ -120,7 +123,12 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET: lista los registros (últimos 200 por defecto)
+/**
+ * GET /bomberman/herramientas_mantenimiento
+ * Retorna los registros de inventario de herramientas de mantenimiento más recientes.
+ * @query {number} [limit=200]
+ * @returns {{ registros: Array }}
+ */
 router.get("/", async (req, res) => {
   const db = global.db;
   try {

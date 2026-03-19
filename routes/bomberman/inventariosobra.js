@@ -4,23 +4,48 @@ import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator
 import { formatDateOnly } from '../../helpers/dateUtils.js';
 const router = Router();
 
-// Middleware: verifica disponibilidad de la DB
 router.use((req, res, next) => {
   if (!global.db) return res.status(503).json({ error: "DB no disponible" });
   next();
 });
 
-// POST: guarda un registro de inventario de obra
+/**
+ * Convierte un valor a entero no negativo, usando 0 como valor predeterminado para entradas vacías o nulas.
+ * @param {*} val
+ * @returns {number}
+ */
+function normalizeInteger(val) {
+  if (val === undefined || val === null || val === '') return 0;
+  const parsed = parseInt(val, 10);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Convierte un valor a una cadena sin espacios en los extremos, retornando cadena vacía para null/undefined.
+ * @param {*} val
+ * @returns {string}
+ */
+function normalizeSeriales(val) {
+  if (val === undefined || val === null) return '';
+  return String(val).trim();
+}
+
+/**
+ * POST /bomberman/inventariosobra
+ * Inserta un registro de inventario de obra que cubre accesorios, herramientas, tuberías, codos,
+ * mangueras, reductores y equipos de seguridad.
+ * Todos los campos de cantidad `_buena`/`_mala` se convierten a enteros.
+ * Los campos de seriales y fechas de vencimiento son opcionales y siempre se incluyen en la inserción.
+ * @body {{ nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, cargo: string, observaciones_generales: string, empresa_id?: number, bomba_pc506_seriales?: string, bomba_pc607_seriales?: string, bomba_tb30_seriales?: string, bomba_tb50_seriales?: string, botiquin_fecha_vencimiento?: string, extintor_fecha_vencimiento?: string, [item_buena: string]: number, [item_mala: string]: number }}
+ * @returns {{ message: string, id: number }}
+ * @throws {400} Si algún campo requerido está ausente.
+ */
 router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
 
-  // Campos obligatorios según nueva estructura de BD
   const required = [
-    // Datos generales
     "nombre_cliente", "nombre_proyecto", "fecha_servicio", "nombre_operador", "cargo",
-    
-    // Accesorios (buena/mala)
     "bola_limpieza_tuberia_55_cifa_buena", "bola_limpieza_tuberia_55_cifa_mala",
     "jostick_buena", "jostick_mala",
     "inyector_grasa_buena", "inyector_grasa_mala",
@@ -40,8 +65,6 @@ router.post("/", async (req, res) => {
     "llave_expansiva_15_buena", "llave_expansiva_15_mala",
     "maseta_buena", "maseta_mala",
     "tubo_para_abrazadera_buena", "tubo_para_abrazadera_mala",
-    
-    // Llaves y destornilladores
     "llave_11_buena", "llave_11_mala",
     "llave_10_buena", "llave_10_mala",
     "llave_13_buena", "llave_13_mala",
@@ -60,8 +83,6 @@ router.post("/", async (req, res) => {
     "destornillador_estrella_ph2x100mm_buena", "destornillador_estrella_ph2x100mm_mala",
     "destornillador_estrella_ph3x75mm_buena", "destornillador_estrella_ph3x75mm_mala",
     "cunete_grasa_5_galones_buena", "cunete_grasa_5_galones_mala",
-    
-    // Tubería y accesorios
     "tubo_3mt_cantidad_buena", "tubo_3mt_cantidad_mala",
     "tubo_2mt_cantidad_buena", "tubo_2mt_cantidad_mala",
     "tubo_1mt_cantidad_buena", "tubo_1mt_cantidad_mala",
@@ -74,8 +95,6 @@ router.post("/", async (req, res) => {
     "empaque_4_cantidad_buena", "empaque_4_cantidad_mala",
     "empaque_5_cantidad_buena", "empaque_5_cantidad_mala",
     "atrapa_diablos_cantidad_buena", "atrapa_diablos_cantidad_mala",
-    
-    // Codos
     "codo_45_r1000_buena", "codo_45_r1000_mala",
     "codo_45_r500_buena", "codo_45_r500_mala",
     "codo_45_r275_buena", "codo_45_r275_mala",
@@ -87,16 +106,12 @@ router.post("/", async (req, res) => {
     "codo_salida_5_cifa_buena", "codo_salida_5_cifa_mala",
     "codo_salida_6_turbosol_buena", "codo_salida_6_turbosol_mala",
     "empaque_codo_salida_cifa_buena", "empaque_codo_salida_cifa_mala",
-    
-    // Mangueras
     "manguera_3x10_buena", "manguera_3x10_mala",
     "manguera_3x8_buena", "manguera_3x8_mala",
     "manguera_3x6_buena", "manguera_3x6_mala",
     "manguera_4x10_buena", "manguera_4x10_mala",
     "manguera_4x6_buena", "manguera_4x6_mala",
     "manguera_5x6_buena", "manguera_5x6_mala",
-    
-    // Reducciones y otros
     "reduccion_4_a_3_buena", "reduccion_4_a_3_mala",
     "reduccion_5_a_4_buena", "reduccion_5_a_4_mala",
     "reduccion_6_a_5_buena", "reduccion_6_a_5_mala",
@@ -104,61 +119,32 @@ router.post("/", async (req, res) => {
     "valvula_guillotina_55_buena", "valvula_guillotina_55_mala",
     "extintor_buena", "extintor_mala",
     "botiquin_buena", "botiquin_mala",
-    // Nuevos campos solicitados: banco metálico y soportes metálicos
     "banco_metalico_buena", "banco_metalico_mala",
     "soportes_metalicos_buena", "soportes_metalicos_mala",
-    
-    // Observaciones
     "observaciones_generales"
   ];
 
-  // Campos opcionales (seriales de bombas y empresa_id)
   const optional = [
     "empresa_id",
     "bomba_pc506_seriales",
     "bomba_pc607_seriales",
     "bomba_tb30_seriales",
     "bomba_tb50_seriales",
-    // Nuevos campos de fecha enviados por el frontend
     "botiquin_fecha_vencimiento",
     "extintor_fecha_vencimiento"
   ];
 
-  // Normalizar fechas a YYYY-MM-DD (devuelve null si no es válida)
-  function normalizeDate(val) {
-    return formatDateOnly(val);
-  }
-
-  // Validar campos requeridos
   const faltantes = required.filter(k => body[k] === undefined || body[k] === null);
   if (faltantes.length) return res.status(400).json({ error: "Faltan campos requeridos", faltantes });
 
-  // Campos de tipo entero (cantidades buena/mala)
   const integerFields = new Set(required.filter(f => f.endsWith('_buena') || f.endsWith('_mala')));
 
-  // Normalizar campos enteros
-  function normalizeInteger(val) {
-    if (val === undefined || val === null || val === '') return 0;
-    const parsed = parseInt(val, 10);
-    return isNaN(parsed) ? 0 : parsed;
-  }
-
-  // Normalizar campos de seriales (texto)
-  function normalizeSeriales(val) {
-    if (val === undefined || val === null) return '';
-    return String(val).trim();
-  }
-
-  // Preparar campos y valores para la inserción
   const fields = [...required];
   const values = required.map(f => {
-    if (integerFields.has(f)) {
-      return normalizeInteger(body[f]);
-    }
+    if (integerFields.has(f)) return normalizeInteger(body[f]);
     return body[f];
   });
 
-  // Agregar campos opcionales si están presentes
   const serialFields = new Set([
     'bomba_pc506_seriales',
     'bomba_pc607_seriales',
@@ -172,16 +158,12 @@ router.post("/", async (req, res) => {
   ]);
 
   optional.forEach(f => {
-    // Para las fechas siempre incluir la columna
-    // y almacenar NULL si no llegó ningún valor útil.
     if (dateFields.has(f)) {
       fields.push(f);
-      values.push(normalizeDate(body[f]));
+      values.push(formatDateOnly(body[f]));
       return;
     }
 
-    // Para los seriales de bombas siempre incluir la columna
-    // y almacenar NULL si no llegó ningún valor útil.
     if (serialFields.has(f)) {
       fields.push(f);
       const val = body[f];
@@ -198,9 +180,8 @@ router.post("/", async (req, res) => {
       if (f === 'empresa_id') {
         values.push(body[f] ? parseInt(body[f], 10) : null);
       } else if (f.endsWith('_fecha_vencimiento') || f.includes('fecha')) {
-        values.push(normalizeDate(body[f]));
+        values.push(formatDateOnly(body[f]));
       } else {
-        // Campos de seriales (texto)
         values.push(normalizeSeriales(body[f]));
       }
     }
@@ -218,7 +199,12 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET: lista los registros de inventario de obra (últimos 200 por defecto)
+/**
+ * GET /bomberman/inventariosobra
+ * Retorna los registros de inventario de obra más recientes.
+ * @query {number} [limit=200]
+ * @returns {{ registros: Array }}
+ */
 router.get("/", async (req, res) => {
   const db = global.db;
   try {

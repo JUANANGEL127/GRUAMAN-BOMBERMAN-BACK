@@ -20,7 +20,7 @@ import herramientasMantenimientoRouter from "./routes/bomberman/herramientas_man
 import kitLimpiezaRouter from "./routes/bomberman/kit_limpieza.js";
 import chequeoElevadorRouter from "./routes/gruaman/chequeo_elevador.js";
 import atsRouter from "./routes/gruaman/ats.js";
-import fetch from 'node-fetch'; // Si usas Node < 18, instala: npm install node-fetch
+import fetch from 'node-fetch';
 import chequeoTorregruasAdminRouter from "./routes/adminsitrador_gruaman/chequeo_torregruas_admin.js";
 import chequeoElevadorAdminRouter from "./routes/adminsitrador_gruaman/chequeo_elevador_admin.js";
 import chequeoAlturasAdminRouter from "./routes/adminsitrador_gruaman/chequeo_alturas_admin.js";
@@ -32,40 +32,42 @@ import herramientasMantenimientoAdminRouter from "./routes/administrador_bomberm
 import kitLimpiezaAdminRouter from "./routes/administrador_bomberman/kit_limpieza_admin.js";
 import adminUsuariosRouter from "./routes/administrador/admin_usuarios.js";
 import adminObrasRouter from "./routes/administrador/admin_obras.js";
-// adminHorasExtraRouter se importa dinámicamente dentro del IIFE async para
-// garantizar que global.db esté disponible. Ver línea ~536.
+// adminHorasExtraRouter se importa dinámicamente dentro del IIFE de inicio para
+// garantizar que global.db esté disponible antes de que se evalúe el módulo.
 import webauthnRouter from './routes/webauthn.js';
 import signioRouter from './routes/signio.js';
 import registrosDiariosRouter from './routes/administrador/registros_diarios.js';
 import authPinRouter from './routes/auth_pin.js';
 import pqrRouter from './routes/sst/pqr.js';
 
-
-// Cargar variables de entorno según el entorno
 import dotenv from "dotenv";
 if (process.env.NODE_ENV === "production") {
   dotenv.config({ path: ".env" });
 } else {
-  dotenv.config({ path: [".env.local", ".env"] }); // <-- Cambia aquí para cargar ambos archivos
+  dotenv.config({ path: [".env.local", ".env"] });
 }
 
-// Configuración de claves VAPID para notificaciones push
 webpush.setVapidDetails(
   process.env.VAPID_EMAIL,
   process.env.VAPID_PUBLIC_KEY,
   process.env.VAPID_PRIVATE_KEY
 );
 
-// Función helper para enviar notificaciones push con opciones correctas
+/**
+ * Envía una notificación Web Push a una suscripción con un TTL de 24 horas
+ * y urgencia alta.
+ * @param {object} subscription - Objeto PushSubscription (endpoint + keys).
+ * @param {{ title: string, body: string, icon?: string, url?: string }} payload
+ * @returns {Promise<void>}
+ */
 async function sendPushNotification(subscription, payload) {
   const options = {
-    TTL: 86400, // 24 horas en segundos
+    TTL: 86400,
     headers: {
       'Content-Type': 'application/json',
       'Urgency': 'high'
     }
   };
-  
   return webpush.sendNotification(
     subscription,
     JSON.stringify(payload),
@@ -76,15 +78,17 @@ async function sendPushNotification(subscription, payload) {
 const { Pool } = pkg;
 const app = express();
 
+/**
+ * Orígenes CORS permitidos. Las solicitudes sin cabecera de origen (Postman, apps móviles)
+ * y cualquier origen de localhost o 127.0.0.1 siempre se permiten.
+ */
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'https://gruaman-bomberman-front.onrender.com',
   'https://gruaman-bomberman-front.onrender.com',
 ];
 app.use(cors({
   origin: (origin, callback) => {
-    // Permitir requests sin origen (apps móviles, curl, Postman)
     if (!origin) return callback(null, true);
-    // Permitir cualquier localhost o 127.0.0.1 en desarrollo
     if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error('Not allowed by CORS'));
@@ -99,7 +103,6 @@ app.use('/signio', signioRouter);
 app.use('/auth/pin', authPinRouter);
 app.use('/api', registrosDiariosRouter);
 
-// Configuración de la conexión a PostgreSQL
 const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
@@ -115,7 +118,10 @@ const pool = process.env.DATABASE_URL
 
 global.db = pool;
 
-// Creación de tablas si no existen
+/**
+ * IIFE de inicio: ejecuta todas las migraciones idempotentes CREATE TABLE / ALTER TABLE,
+ * luego importa y monta dinámicamente los routers que dependen de global.db.
+ */
 (async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS empresas (
@@ -144,24 +150,9 @@ global.db = pool;
     );
   `);
 
-  // Añade columnas de PIN si no existen (migraciones seguras)
   await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS pin_habilitado BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
   await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS pin_hash VARCHAR(100)`).catch(() => {});
 
-  // --- ELIMINADO: registros_horas ---
-  // await pool.query(`
-  //   CREATE TABLE IF NOT EXISTS registros_horas (
-  //     id SERIAL PRIMARY KEY,
-  //     trabajador_id INT NOT NULL REFERENCES trabajadores(id) ON DELETE CASCADE,
-  //     fecha DATE NOT NULL,
-  //     turno TEXT CHECK (turno IN ('mañana', 'tarde')) NOT NULL,
-  //     hora_usuario TIME NOT NULL,
-  //     hora_sistema TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  //     tipo TEXT CHECK (tipo IN ('entrada', 'salida')) NOT NULL
-  //   );
-  // `);
-
-  // --- NUEVA TABLA horas_jornada ---
   await pool.query(`
     CREATE TABLE IF NOT EXISTS horas_jornada (
       id SERIAL PRIMARY KEY,
@@ -176,7 +167,6 @@ global.db = pool;
       minutos_almuerzo INT CHECK (minutos_almuerzo >= 1 AND minutos_almuerzo <= 60)
     );
   `);
-  // Migraciones seguras para tablas que ya existen en producción con esquema antiguo
   await pool.query(`ALTER TABLE horas_jornada ADD COLUMN IF NOT EXISTS id SERIAL`).catch(() => {});
   await pool.query(`ALTER TABLE horas_jornada ALTER COLUMN hora_salida DROP NOT NULL`).catch(() => {});
   await pool.query(`ALTER TABLE horas_jornada ALTER COLUMN cargo DROP NOT NULL`).catch(() => {});
@@ -206,9 +196,8 @@ global.db = pool;
     );
   `);
 
-  // Permitir NULL en hora_llegada_obra y hora_salida_obra (ya no se usan en planilla de bombeo)
   await pool.query(`
-    ALTER TABLE planilla_bombeo 
+    ALTER TABLE planilla_bombeo
       ALTER COLUMN hora_llegada_obra DROP NOT NULL,
       ALTER COLUMN hora_salida_obra DROP NOT NULL
   `).catch(() => {});
@@ -429,20 +418,16 @@ global.db = pool;
     );
   `);
 
-  // Tabla chequeo_elevador
   await pool.query(`
     CREATE TABLE IF NOT EXISTS chequeo_elevador (
       id SERIAL PRIMARY KEY,
-
       nombre_cliente              VARCHAR(100) NOT NULL,
       nombre_proyecto             VARCHAR(100) NOT NULL,
       fecha_servicio              DATE NOT NULL,
       nombre_operador             VARCHAR(100) NOT NULL,
       cargo                       VARCHAR(100) NOT NULL,
-
       epp_completo_y_en_buen_estado VARCHAR(10) CHECK (epp_completo_y_en_buen_estado IN ('SI','NO','NA')) NOT NULL,
       epcc_completo_y_en_buen_estado VARCHAR(10) CHECK (epcc_completo_y_en_buen_estado IN ('SI','NO','NA')) NOT NULL,
-
       estructura_equipo_buen_estado VARCHAR(10) CHECK (estructura_equipo_buen_estado IN ('SI','NO','NA')) NOT NULL,
       equipo_sin_fugas_fluido VARCHAR(10) CHECK (equipo_sin_fugas_fluido IN ('SI','NO','NA')) NOT NULL,
       tablero_mando_buen_estado VARCHAR(10) CHECK (tablero_mando_buen_estado IN ('SI','NO','NA')) NOT NULL,
@@ -460,20 +445,15 @@ global.db = pool;
       freno_electromagnetico_buen_estado VARCHAR(10) CHECK (freno_electromagnetico_buen_estado IN ('SI','NO','NA')) NOT NULL,
       sistema_velocidad_calibrado_y_engranes_buen_estado VARCHAR(10) CHECK (sistema_velocidad_calibrado_y_engranes_buen_estado IN ('SI','NO','NA')) NOT NULL,
       limitantes_superior_inferior_calibrados VARCHAR(10) CHECK (limitantes_superior_inferior_calibrados IN ('SI','NO','NA')) NOT NULL,
-
       area_equipo_senalizada_y_demarcada VARCHAR(10) CHECK (area_equipo_senalizada_y_demarcada IN ('SI','NO','NA')) NOT NULL,
       equipo_con_parada_emergencia VARCHAR(10) CHECK (equipo_con_parada_emergencia IN ('SI','NO','NA')) NOT NULL,
       placa_identificacion_con_carga_maxima VARCHAR(10) CHECK (placa_identificacion_con_carga_maxima IN ('SI','NO','NA')) NOT NULL,
       sistema_sobrecarga_funcional VARCHAR(10) CHECK (sistema_sobrecarga_funcional IN ('SI','NO','NA')) NOT NULL,
-
       cabina_desinfectada_previamente VARCHAR(10) CHECK (cabina_desinfectada_previamente IN ('SI','NO','NA')) NOT NULL,
-
       observaciones_generales TEXT
     );
   `);
 
-
-  // Tabla de contraseñas de administrador
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admin_passwords (
       id SERIAL PRIMARY KEY,
@@ -482,7 +462,6 @@ global.db = pool;
     );
   `);
 
-  // Tabla para suscripciones push
   await pool.query(`
     CREATE TABLE IF NOT EXISTS push_subscriptions (
       trabajador_id INT PRIMARY KEY,
@@ -491,7 +470,6 @@ global.db = pool;
     );
   `);
 
-  // Tabla para locks de cron jobs (evita duplicados en múltiples instancias)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cron_locks (
       lock_id VARCHAR(100) PRIMARY KEY,
@@ -499,10 +477,8 @@ global.db = pool;
     );
   `);
 
-  // Limpiar locks viejos (más de 1 día) al iniciar
   await pool.query(`DELETE FROM cron_locks WHERE created_at < NOW() - INTERVAL '1 day'`).catch(() => {});
 
-  // --- TABLA PQR (SST) ---
   await pool.query(`
     CREATE TABLE IF NOT EXISTS pqr (
       id SERIAL PRIMARY KEY,
@@ -517,7 +493,6 @@ global.db = pool;
     );
   `);
 
-  // --- TABLA ATS (Análisis de Trabajo Seguro) ---
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ats (
       id                          SERIAL PRIMARY KEY,
@@ -530,8 +505,6 @@ global.db = pool;
       nombre_operador             VARCHAR(255),
       cargo                       VARCHAR(255),
       empresa_id                  INTEGER       DEFAULT 1,
-
-      -- RIESGOS FÍSICOS
       riesgo_radiacion_solar      BOOLEAN DEFAULT FALSE,
       riesgo_ruido                BOOLEAN DEFAULT FALSE,
       riesgo_alta_tension         BOOLEAN DEFAULT FALSE,
@@ -543,25 +516,15 @@ global.db = pool;
       riesgo_baja_tension         BOOLEAN DEFAULT FALSE,
       riesgo_calor                BOOLEAN DEFAULT FALSE,
       riesgo_frio_humedad         BOOLEAN DEFAULT FALSE,
-
-      -- RIESGOS QUÍMICOS
       riesgo_aerosol              BOOLEAN DEFAULT FALSE,
       riesgo_polvos               BOOLEAN DEFAULT FALSE,
       riesgo_vapores              BOOLEAN DEFAULT FALSE,
-
-      -- RIESGOS ERGONÓMICOS
       riesgo_sobre_esfuerzo       BOOLEAN DEFAULT FALSE,
       riesgo_posturas_incomodas   BOOLEAN DEFAULT FALSE,
       riesgo_posturas_estaticas   BOOLEAN DEFAULT FALSE,
       riesgo_movimientos_repetitivos BOOLEAN DEFAULT FALSE,
-
-      -- RIESGO PSICOSOCIAL
       riesgo_psicosocial          BOOLEAN DEFAULT FALSE,
-
-      -- RIESGOS NATURALES
       riesgo_naturales            BOOLEAN DEFAULT FALSE,
-
-      -- RIESGOS LOCATIVOS
       riesgo_caida_mismo_nivel    BOOLEAN DEFAULT FALSE,
       riesgo_caida_distinto_nivel BOOLEAN DEFAULT FALSE,
       riesgo_caida_objetos        BOOLEAN DEFAULT FALSE,
@@ -569,8 +532,6 @@ global.db = pool;
       riesgo_desprendimiento      BOOLEAN DEFAULT FALSE,
       riesgo_hundimientos         BOOLEAN DEFAULT FALSE,
       riesgo_atropellamiento      BOOLEAN DEFAULT FALSE,
-
-      -- RIESGOS MECÁNICOS
       riesgo_golpes_machacones    BOOLEAN DEFAULT FALSE,
       riesgo_atrapamientos        BOOLEAN DEFAULT FALSE,
       riesgo_mecanismos_movimiento BOOLEAN DEFAULT FALSE,
@@ -579,22 +540,16 @@ global.db = pool;
       riesgo_espacios_reducidos   BOOLEAN DEFAULT FALSE,
       riesgo_cortes_herramienta   BOOLEAN DEFAULT FALSE,
       riesgo_caida_objetos_mec    BOOLEAN DEFAULT FALSE,
-
-      -- RIESGOS BIOLÓGICOS
       riesgo_bacterias_virus      BOOLEAN DEFAULT FALSE,
       riesgo_picadura_insectos    BOOLEAN DEFAULT FALSE,
       riesgo_ofidio               BOOLEAN DEFAULT FALSE,
       riesgo_mordedura_caninos    BOOLEAN DEFAULT FALSE,
-
-      -- EQUIPOS Y HERRAMIENTAS
       herramientas_manuales       TEXT,
       herramientas_electricas     TEXT,
       herramientas_neumaticas     TEXT,
       herramientas_hidraulicas    TEXT,
       herramientas_mecanicas      TEXT,
       herramientas_otras          TEXT,
-
-      -- EPP (ELEMENTOS DE PROTECCIÓN PERSONAL)
       epp_casco                   BOOLEAN DEFAULT FALSE,
       epp_proteccion_auditiva     BOOLEAN DEFAULT FALSE,
       epp_mascarilla_polvo        BOOLEAN DEFAULT FALSE,
@@ -606,8 +561,6 @@ global.db = pool;
       epp_gafas_seguridad         BOOLEAN DEFAULT FALSE,
       epp_overol                  BOOLEAN DEFAULT FALSE,
       epp_arrestador_caidas       BOOLEAN DEFAULT FALSE,
-
-      -- PASOS CONFIRMADOS (hasta 9 pasos)
       paso_1_confirmado           BOOLEAN DEFAULT FALSE,
       paso_2_confirmado           BOOLEAN DEFAULT FALSE,
       paso_3_confirmado           BOOLEAN DEFAULT FALSE,
@@ -617,7 +570,6 @@ global.db = pool;
       paso_7_confirmado           BOOLEAN DEFAULT FALSE,
       paso_8_confirmado           BOOLEAN DEFAULT FALSE,
       paso_9_confirmado           BOOLEAN DEFAULT FALSE,
-
       created_at                  TIMESTAMP DEFAULT NOW()
     );
   `);
@@ -625,15 +577,25 @@ global.db = pool;
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_ats_empresa ON ats (empresa_id)`).catch(() => {});
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_ats_fecha   ON ats (fecha_elaboracion)`).catch(() => {});
 
-  // --- NUEVA TABLA PARA HORAS DE JORNADA (definición duplicada; la tabla ya se crea arriba) ---
-// Endpoint para enviar una notificación push manualmente (pruebas)
+  const { default: adminHorasExtraRouter } = await import("./routes/administrador/admin_horas_extra.js");
+  app.use("/administrador/admin_horas_extra", adminHorasExtraRouter);
+
+  const { default: horaJornadaRouter } = await import("./routes/compartido/hora_llegada_salida.js");
+  app.use("/horas_jornada", horaJornadaRouter);
+})();
+
+/**
+ * POST /push/test
+ * Envía una notificación push de prueba a un trabajador específico identificado por numero_identificacion.
+ * @body {{ numero_identificacion: string, title: string, body: string }}
+ * @returns {{ success: boolean, message: string }}
+ */
 app.post("/push/test", async (req, res) => {
   const { numero_identificacion, title, body } = req.body;
   if (!numero_identificacion || !title || !body) {
     return res.status(400).json({ error: "Faltan parámetros obligatorios (numero_identificacion, title, body)" });
   }
   try {
-    // Buscar la suscripción del trabajador
     const workerRes = await pool.query(
       `SELECT ps.subscription FROM trabajadores t JOIN push_subscriptions ps ON ps.trabajador_id = t.id WHERE t.numero_identificacion = $1`,
       [String(numero_identificacion)]
@@ -660,17 +622,47 @@ app.post("/push/test", async (req, res) => {
   }
 });
 
-  // IMPORTA Y USA EL ROUTER DESPUÉS DE global.db Y DESPUÉS DE LA CREACIÓN DE TABLAS:
-  const { default: adminHorasExtraRouter } = await import("./routes/administrador/admin_horas_extra.js");
-  app.use("/administrador/admin_horas_extra", adminHorasExtraRouter);
+app.use("/administrador", administradorRouter);
+app.use("/permiso_trabajo_admin", administradorRouter);
+app.use("/inspeccion_izaje_admin", inspeccionIzajeAdminRouter);
+app.use("/inspeccion_epcc_admins", inspeccionEPCCAdminsRouter);
+app.use("/chequeo_torregruas_admin", chequeoTorregruasAdminRouter);
+app.use("/chequeo_elevador_admin", chequeoElevadorAdminRouter);
+app.use("/chequeo_alturas_admin", chequeoAlturasAdminRouter);
+app.use("/planilla_bombeo_admin", planillaBombeoAdminRouter);
+app.use("/inventarios_obra_admin", inventariosObraAdminRouter);
+app.use("/inspeccion_epcc_bomberman_admin", inspeccionEpccBombermanAdminRouter);
+app.use("/checklist_admin", checklistAdminRouter);
+app.use("/herramientas_mantenimiento_admin", herramientasMantenimientoAdminRouter);
+app.use("/kit_limpieza_admin", kitLimpiezaAdminRouter);
+app.use("/admin_usuarios", adminUsuariosRouter);
+app.use("/admin_obras", adminObrasRouter);
+// /administrador/admin_horas_extra se monta dentro del IIFE de inicio
+app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
+app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
+app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
+app.use("/gruaman/inspeccion_epcc", inspeccionEpccRouter);
+app.use("/gruaman/inspeccion_izaje", inspeccionIzajeRouter);
+app.use("/gruaman/chequeo_elevador", chequeoElevadorRouter);
+app.use("/gruaman/ats", atsRouter);
+app.use("/bomberman/inventariosobra", inventariosObraRouter);
+app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
+app.use("/bomberman/herramientas_mantenimiento", herramientasMantenimientoRouter);
+app.use("/bomberman/kit_limpieza", kitLimpiezaRouter);
+app.use("/sst/pqr", pqrRouter);
+// /horas_jornada se monta dentro del IIFE de inicio
 
-  const { default: horaJornadaRouter } = await import("./routes/compartido/hora_llegada_salida.js");
-  app.use("/horas_jornada", horaJornadaRouter);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () =>
+  console.log(`API corriendo en http://localhost:${PORT} (PostgreSQL conectado)`)
+);
 
-  // ...puedes agregar aquí otros routers que dependan de global.db si es necesario...
-})();
-
-// Devuelve los nombres de todos los trabajadores, filtrado por empresa_id si se proporciona
+/**
+ * GET /nombres_trabajadores
+ * Retorna los nombres de todos los trabajadores activos, opcionalmente filtrados por empresa_id.
+ * @query {{ empresa_id?: number }}
+ * @returns {{ nombres: string[] }}
+ */
 app.get("/nombres_trabajadores", async (req, res) => {
   try {
     const { empresa_id } = req.query;
@@ -690,7 +682,14 @@ app.get("/nombres_trabajadores", async (req, res) => {
   }
 });
 
-// Guarda los datos básicos de un trabajador
+/**
+ * POST /datos_basicos
+ * Hace upsert de un registro de trabajador. Crea la fila si el trabajador no existe;
+ * de lo contrario actualiza empresa_id, obra_id, numero_identificacion y empresa
+ * solo cuando los valores almacenados difieren de los de la solicitud entrante.
+ * @body {{ nombre: string, empresa: string, empresa_id: number, obra_id: number, numero_identificacion: string }}
+ * @returns {{ message: string, trabajadorId: number, nombre: string, empresa: string, empresa_id: number, obra_id: number, numero_identificacion: string }}
+ */
 app.post("/datos_basicos", async (req, res) => {
   const { nombre, empresa, empresa_id, obra_id, numero_identificacion } = req.body;
 
@@ -737,7 +736,12 @@ app.post("/datos_basicos", async (req, res) => {
   }
 });
 
-// Devuelve el ID de un trabajador según los parámetros proporcionados
+/**
+ * GET /trabajador_id
+ * Resuelve el ID de base de datos de un trabajador coincidiendo los cuatro campos de identidad.
+ * @query {{ nombre: string, empresa: string, obra: string, numero_identificacion: string }}
+ * @returns {{ trabajadorId: number, nombre: string, empresa: string, obra: string, numero_identificacion: string }}
+ */
 app.get("/trabajador_id", async (req, res) => {
   const { nombre, empresa, obra, numero_identificacion } = req.query;
   if (!nombre || !empresa || !obra || !numero_identificacion) {
@@ -777,10 +781,13 @@ app.get("/trabajador_id", async (req, res) => {
   }
 });
 
-// Devuelve todas las obras registradas
+/**
+ * GET /obras
+ * Retorna todas las obras registradas con su constructora, empresa_id y estado activo.
+ * @returns {{ obras: Array<{ id: number, nombre_obra: string, constructora: string, empresa_id: number, activa: boolean }> }}
+ */
 app.get("/obras", async (req, res) => {
   try {
-    // Cambia "activo" por "activa" para coincidir con la columna real
     const result = await pool.query(`SELECT id, nombre_obra, constructora, empresa_id, activa FROM obras`);
     res.json({ obras: result.rows });
   } catch (error) {
@@ -788,7 +795,11 @@ app.get("/obras", async (req, res) => {
   }
 });
 
-// Devuelve los números de bomba registrados
+/**
+ * GET /bombas
+ * Retorna todos los números de bomba registrados en la tabla bombas.
+ * @returns {{ bombas: Array<{ numero_bomba: string }> }}
+ */
 app.get("/bombas", async (req, res) => {
   try {
     const result = await pool.query(`SELECT numero_bomba FROM bombas`);
@@ -798,18 +809,23 @@ app.get("/bombas", async (req, res) => {
   }
 });
 
-// Valida si una ubicación está dentro del rango permitido para una obra
+/**
+ * POST /validar_ubicacion
+ * Valida que una coordenada GPS dada se encuentre dentro de los 500 m de la ubicación registrada de la obra.
+ * Las obras que coincidan con la variable de entorno OBRA_BYPASS_NOMBRE omiten la geolocalización por completo.
+ * @body {{ obra_id: number, lat: number, lon: number }}
+ * @returns {{ ok: boolean, message?: string }}
+ */
 app.post("/validar_ubicacion", async (req, res) => {
   const { obra_id, lat, lon } = req.body;
   if (!obra_id || typeof lat !== "number" || typeof lon !== "number") {
     return res.status(400).json({ ok: false, message: "Parámetros inválidos" });
   }
   try {
-    // Verificar si es la obra señuelo (bypass de geolocalización)
     const OBRA_BYPASS = process.env.OBRA_BYPASS_NOMBRE || "LA CENTRAL";
     const obraCheck = await pool.query(`SELECT nombre_obra FROM obras WHERE id = $1`, [obra_id]);
     if (obraCheck.rows.length > 0 && obraCheck.rows[0].nombre_obra === OBRA_BYPASS) {
-      return res.json({ ok: true }); // Acceso sin validar ubicación
+      return res.json({ ok: true });
     }
 
     const result = await pool.query(`SELECT latitud, longitud FROM obras WHERE id = $1`, [obra_id]);
@@ -828,7 +844,14 @@ app.post("/validar_ubicacion", async (req, res) => {
   }
 });
 
-// Calcula la distancia entre dos coordenadas geográficas
+/**
+ * Calcula la distancia de gran círculo entre dos puntos geográficos usando la fórmula de Haversine.
+ * @param {number} lat1 - Latitud del punto 1 en grados decimales.
+ * @param {number} lon1 - Longitud del punto 1 en grados decimales.
+ * @param {number} lat2 - Latitud del punto 2 en grados decimales.
+ * @param {number} lon2 - Longitud del punto 2 en grados decimales.
+ * @returns {number} Distancia en metros.
+ */
 function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const dLat = deg2rad(lat2 - lat1);
@@ -841,59 +864,22 @@ function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
+
+/**
+ * Convierte grados a radianes.
+ * @param {number} deg
+ * @returns {number}
+ */
 function deg2rad(deg) {
   return deg * (Math.PI / 180);
 }
 
-// Monta los routers para las rutas específicas
-app.use("/administrador", administradorRouter);
-// Exponer endpoints específicos para la UI de permisos de trabajo
-app.use("/permiso_trabajo_admin", administradorRouter);
-// Router administrativo para inspección izaje (búsqueda / descargas)
-app.use("/inspeccion_izaje_admin", inspeccionIzajeAdminRouter);
-// Router administrativo para inspección EPCC (búsqueda / descargas)
-app.use("/inspeccion_epcc_admins", inspeccionEPCCAdminsRouter);
-// Router administrativo para chequeo torregruas (búsqueda / descargas)
-app.use("/chequeo_torregruas_admin", chequeoTorregruasAdminRouter);
-// Router administrativo para chequeo elevador (búsqueda / descargas)
-app.use("/chequeo_elevador_admin", chequeoElevadorAdminRouter);
-// Router administrativo para chequeo alturas (búsqueda / descargas)
-app.use("/chequeo_alturas_admin", chequeoAlturasAdminRouter);
-// Router administrativo para planilla bombeo (búsqueda / descargas)
-app.use("/planilla_bombeo_admin", planillaBombeoAdminRouter);
-app.use("/inventarios_obra_admin", inventariosObraAdminRouter);
-app.use("/inspeccion_epcc_bomberman_admin", inspeccionEpccBombermanAdminRouter);
-// Router administrativo para checklist (búsqueda / descargas)
-app.use("/checklist_admin", checklistAdminRouter);
-app.use("/herramientas_mantenimiento_admin", herramientasMantenimientoAdminRouter);
-app.use("/kit_limpieza_admin", kitLimpiezaAdminRouter);
-// Router para administración de usuarios
-app.use("/admin_usuarios", adminUsuariosRouter);
-// Router para administración de obras
-app.use("/admin_obras", adminObrasRouter);
-// Nota: /administrador/admin_horas_extra ya se registra dentro del IIFE async (línea ~537)
-app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
-app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
-app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
-app.use("/gruaman/inspeccion_epcc", inspeccionEpccRouter);
-app.use("/gruaman/inspeccion_izaje", inspeccionIzajeRouter);
-app.use("/gruaman/chequeo_elevador", chequeoElevadorRouter);
-app.use("/gruaman/ats", atsRouter);
-app.use("/bomberman/inventariosobra", inventariosObraRouter);
-app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
-app.use("/bomberman/herramientas_mantenimiento", herramientasMantenimientoRouter);
-app.use("/bomberman/kit_limpieza", kitLimpiezaRouter);
-app.use("/sst/pqr", pqrRouter);
-
-// Nota: /horas_jornada ya se registra dentro del IIFE async (línea ~539) para
-// garantizar que global.db esté disponible antes de montar el router.
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () =>
-  console.log(`✅ API corriendo en http://localhost:${PORT} (PostgreSQL conectado)`)
-);
-
-// Devuelve los datos básicos de todos los trabajadores, filtrado por empresa_id si se proporciona
+/**
+ * GET /datos_basicos
+ * Retorna los datos de identidad de todos los trabajadores activos, opcionalmente filtrados por empresa_id.
+ * @query {{ empresa_id?: number }}
+ * @returns {{ datos: Array<{ nombre: string, empresa_id: number, numero_identificacion: string, activo: boolean, cargo: string }> }}
+ */
 app.get("/datos_basicos", async (req, res) => {
   try {
     const { empresa_id } = req.query;
@@ -914,15 +900,25 @@ app.get("/datos_basicos", async (req, res) => {
   }
 });
 
-// Rate limiter en memoria para /admin/login (sin dependencias externas)
+/**
+ * Limitador de tasa en memoria para POST /admin/login.
+ * Clave: IP del cliente. Valor: { count: number, resetAt: number }.
+ * @type {Map<string, { count: number, resetAt: number }>}
+ */
 const adminLoginAttempts = new Map();
 
-// Endpoint de login de administrador
+/**
+ * POST /admin/login
+ * Autentica a un usuario administrador comparando la contraseña proporcionada contra todos
+ * los hashes bcrypt almacenados. Aplica un limitador de tasa en memoria de 10 intentos por IP
+ * por ventana de 15 minutos.
+ * @body {{ password: string }}
+ * @returns {{ success: boolean, rol: string }}
+ */
 app.post("/admin/login", async (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: "Falta la contraseña" });
 
-  // Rate limiting: máximo 10 intentos por IP cada 15 minutos
   const ipKey = req.ip;
   const now = Date.now();
   const adminAttempt = adminLoginAttempts.get(ipKey) || { count: 0, resetAt: now + 15 * 60 * 1000 };
@@ -951,11 +947,16 @@ app.post("/admin/login", async (req, res) => {
   }
 });
 
-// Endpoint para guardar la suscripción push
+/**
+ * POST /push/subscribe
+ * Registra o actualiza una suscripción Web Push para un trabajador identificado por
+ * numero_identificacion. Acepta la suscripción como objeto JSON o como cadena JSON serializada.
+ * @body {{ numero_identificacion: string, subscription: object|string }}
+ * @returns {{ success: boolean, action: 'inserted'|'updated' }}
+ */
 app.post("/push/subscribe", async (req, res) => {
   const { numero_identificacion, subscription } = req.body;
 
-  // Validaciones básicas
   if (!numero_identificacion) {
     return res.status(400).json({ error: "Falta numero_identificacion" });
   }
@@ -963,7 +964,6 @@ app.post("/push/subscribe", async (req, res) => {
     return res.status(400).json({ error: "Falta subscription" });
   }
 
-  // Normalizar subscription: aceptar objeto o JSON string
   let subscriptionObj = subscription;
   if (typeof subscription === "string") {
     try {
@@ -981,7 +981,6 @@ app.post("/push/subscribe", async (req, res) => {
   try {
     console.log("POST /push/subscribe payload:", { numero_identificacion, subscription: subscriptionObj });
 
-    // Buscar id del trabajador
     const workerRes = await pool.query(
       `SELECT id FROM trabajadores WHERE numero_identificacion = $1`,
       [String(numero_identificacion)]
@@ -991,7 +990,6 @@ app.post("/push/subscribe", async (req, res) => {
     }
     const trabajador_id = workerRes.rows[0].id;
 
-    // Intentar INSERT; si falla por duplicado, hacer UPDATE
     try {
       await pool.query(
         `INSERT INTO push_subscriptions (trabajador_id, subscription) VALUES ($1, $2)`,
@@ -999,7 +997,6 @@ app.post("/push/subscribe", async (req, res) => {
       );
       return res.json({ success: true, action: "inserted" });
     } catch (insertErr) {
-      // Duplicate key -> actualizar la suscripción existente
       if (insertErr.code === "23505") {
         try {
           await pool.query(
@@ -1022,14 +1019,17 @@ app.post("/push/subscribe", async (req, res) => {
   }
 });
 
-// Endpoint informativo: esquema / ejemplo para /push/subscribe
+/**
+ * GET /push/subscribe/schema
+ * Retorna una descripción para desarrolladores del payload esperado en POST /push/subscribe.
+ * @returns {{ description: string, contentType: string, bodyExample: object, frontendNotes: string[] }}
+ */
 app.get("/push/subscribe/schema", (req, res) => {
   res.json({
     description: "POST /push/subscribe espera JSON con numero_identificacion y subscription.",
     contentType: "application/json",
     bodyExample: {
       numero_identificacion: "12345678",
-      // subscription debe ser el objeto resultante de subscription.toJSON() en el navegador
       subscription: {
         endpoint: "https://fcm.googleapis.com/fcm/send/....",
         keys: {
@@ -1046,27 +1046,32 @@ app.get("/push/subscribe/schema", (req, res) => {
   });
 });
 
-// --- NOTIFICACIONES PUSH PROGRAMADAS ---
-// IMPORTANTE: Usamos timezone Colombia y un lock en BD para evitar duplicados en múltiples instancias
-
+/**
+ * Zona horaria usada para todos los cron jobs de notificaciones push programadas.
+ * @type {string}
+ */
 const CRON_TIMEZONE = 'America/Bogota';
 
-// Helper para ejecutar cron con lock en BD (evita duplicados si hay múltiples instancias)
+/**
+ * Adquiere un bloqueo distribuido por hora mediante la tabla cron_locks antes de ejecutar
+ * una tarea programada. Previene ejecuciones duplicadas en múltiples instancias del servidor.
+ * Ejecuta sin bloqueo si la tabla cron_locks no existe (código 42P01).
+ * @param {string} nombreTarea - Nombre único de la tarea usado como parte de la clave del bloqueo.
+ * @param {() => Promise<void>} callback - Trabajo asíncrono a ejecutar bajo el bloqueo.
+ * @returns {Promise<void>}
+ */
 async function ejecutarConLock(nombreTarea, callback) {
-  const lockId = `cron_${nombreTarea}_${new Date().toISOString().slice(0,13)}`; // Lock por hora
+  const lockId = `cron_${nombreTarea}_${new Date().toISOString().slice(0,13)}`;
   try {
-    // Intentar obtener el lock (insertar registro único)
     await pool.query(
       `INSERT INTO cron_locks (lock_id, created_at) VALUES ($1, NOW()) ON CONFLICT (lock_id) DO NOTHING`,
       [lockId]
     );
-    // Verificar si obtuvimos el lock (solo la primera instancia lo logra)
     const check = await pool.query(`SELECT 1 FROM cron_locks WHERE lock_id = $1 AND created_at > NOW() - INTERVAL '5 minutes'`, [lockId]);
     if (check.rows.length > 0) {
       await callback();
     }
   } catch (err) {
-    // Si la tabla no existe, ejecutar sin lock (retrocompatibilidad)
     if (err.code === '42P01') {
       await callback();
     } else {
@@ -1075,7 +1080,6 @@ async function ejecutarConLock(nombreTarea, callback) {
   }
 }
 
-// 6:30am - Saludo de buenos días
 cron.schedule('30 6 * * *', async () => {
   await ejecutarConLock('buenos_dias_630', async () => {
     const result = await pool.query(`
@@ -1086,7 +1090,7 @@ cron.schedule('30 6 * * *', async () => {
     for (const row of result.rows) {
       try {
         await sendPushNotification(row.subscription, {
-          title: "¡Buenos días!",
+          title: "Buenos dias!",
           body: "buenos dias super heroe, no olvides llenar todos tus permisos el dia de hoy",
           icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
           url: "/"
@@ -1098,7 +1102,6 @@ cron.schedule('30 6 * * *', async () => {
   });
 }, { timezone: CRON_TIMEZONE });
 
-// 10:00am - Mensaje motivacional
 cron.schedule('0 10 * * *', async () => {
   await ejecutarConLock('motivacion_1000', async () => {
     const result = await pool.query(`
@@ -1109,7 +1112,7 @@ cron.schedule('0 10 * * *', async () => {
     for (const row of result.rows) {
       try {
         await sendPushNotification(row.subscription, {
-          title: "¡Ánimo super héroe!",
+          title: "Animo super heroe!",
           body: "hola super heroe, !tu puedes!, hoy es un gran dia para construir una catedral!",
           icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
           url: "/"
@@ -1121,7 +1124,6 @@ cron.schedule('0 10 * * *', async () => {
   });
 }, { timezone: CRON_TIMEZONE });
 
-// 2:00pm - Mensaje de seguimiento
 cron.schedule('0 14 * * *', async () => {
   await ejecutarConLock('seguimiento_1400', async () => {
     const result = await pool.query(`
@@ -1132,8 +1134,8 @@ cron.schedule('0 14 * * *', async () => {
     for (const row of result.rows) {
       try {
         await sendPushNotification(row.subscription, {
-          title: "¿Cómo vas?",
-          body: "¿cómo vas super heroe?, ¿todo marchando",
+          title: "Como vas?",
+          body: "como vas super heroe?, todo marchando",
           icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
           url: "/"
         });
@@ -1144,7 +1146,6 @@ cron.schedule('0 14 * * *', async () => {
   });
 }, { timezone: CRON_TIMEZONE });
 
-// 3:25pm (hora Colombia) - Notificación de recordatorio Progreso
 cron.schedule('25 15 * * *', async () => {
   await ejecutarConLock('progreso_1525', async () => {
     const result = await pool.query(`
@@ -1155,8 +1156,8 @@ cron.schedule('25 15 * * *', async () => {
     for (const row of result.rows) {
       try {
         await sendPushNotification(row.subscription, {
-          title: "¡Hola super heroe!",
-          body: "pasamos a recordarte que somo progreso!",
+          title: "Hola super heroe!",
+          body: "pasamos a recordarte que somos progreso!",
           icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
           url: "/"
         });
@@ -1167,7 +1168,6 @@ cron.schedule('25 15 * * *', async () => {
   });
 }, { timezone: CRON_TIMEZONE });
 
-// 5:00pm - Mensaje de cierre
 cron.schedule('0 17 * * *', async () => {
   await ejecutarConLock('cierre_1700', async () => {
     const result = await pool.query(`
@@ -1178,7 +1178,7 @@ cron.schedule('0 17 * * *', async () => {
     for (const row of result.rows) {
       try {
         await sendPushNotification(row.subscription, {
-          title: "¿Terminaste?",
+          title: "Terminaste?",
           body: "super heroe, ya terminaste todos tus registros?",
           icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
           url: "/"
@@ -1190,24 +1190,25 @@ cron.schedule('0 17 * * *', async () => {
   });
 }, { timezone: CRON_TIMEZONE });
 
-// 4:00pm - Notificación de formularios faltantes
+/**
+ * Forms checked daily at 4:00pm. For each subscribed worker, a notification
+ * is sent listing any form that has no matching record for the current date.
+ * @type {Array<{ nombre: string, tabla: string }>}
+ */
+const formularios = [
+  { nombre: "registro de horas", tabla: "registros_horas" },
+  { nombre: "planilla de bombeo", tabla: "planilla_bombeo" },
+  { nombre: "permiso de trabajo", tabla: "permiso_trabajo" },
+  { nombre: "chequeo de alturas", tabla: "chequeo_alturas" },
+  { nombre: "chequeo de torregruas", tabla: "chequeo_torregruas" },
+  { nombre: "inspección EPCC", tabla: "inspeccion_epcc" },
+  { nombre: "inspección izaje", tabla: "inspeccion_izaje" },
+];
+
 cron.schedule('0 16 * * *', async () => {
   await ejecutarConLock('faltantes_1600', async () => {
     const hoy = new Date().toISOString().slice(0, 10);
 
-    // Define los formularios a revisar (agrega aquí los que quieras chequear)
-    const formularios = [
-      { nombre: "registro de horas", tabla: "registros_horas" },
-      { nombre: "planilla de bombeo", tabla: "planilla_bombeo" },
-      { nombre: "permiso de trabajo", tabla: "permiso_trabajo" },
-      { nombre: "chequeo de alturas", tabla: "chequeo_alturas" },
-      { nombre: "chequeo de torregruas", tabla: "chequeo_torregruas" },
-      { nombre: "inspección EPCC", tabla: "inspeccion_epcc" },
-      { nombre: "inspección izaje", tabla: "inspeccion_izaje" },
-      // Agrega más si lo necesitas
-    ];
-
-    // Obtén todos los trabajadores suscritos
     const trabajadores = await pool.query(`
       SELECT t.id, t.nombre, ps.subscription
       FROM trabajadores t
@@ -1217,21 +1218,20 @@ cron.schedule('0 16 * * *', async () => {
     for (const row of trabajadores.rows) {
       let faltantes = [];
       for (const form of formularios) {
-        // Verifica si el trabajador tiene registro para hoy en cada formulario
         let existe = false;
         try {
           const res = await pool.query(
-            `SELECT 1 FROM ${form.tabla} WHERE 
-              (${form.tabla}.trabajador_id = $1 OR 
-               ${form.tabla}.nombre_operador = $2 OR 
-               ${form.tabla}.nombre = $2) 
+            `SELECT 1 FROM ${form.tabla} WHERE
+              (${form.tabla}.trabajador_id = $1 OR
+               ${form.tabla}.nombre_operador = $2 OR
+               ${form.tabla}.nombre = $2)
               AND fecha_servicio = $3
               LIMIT 1`,
             [row.id, row.nombre, hoy]
           );
           existe = res.rows.length > 0;
         } catch (e) {
-          // Si la tabla no tiene esos campos, ignora el error
+          // ignore tables that do not have the expected columns
         }
         if (!existe) faltantes.push(form.nombre);
       }
@@ -1239,7 +1239,7 @@ cron.schedule('0 16 * * *', async () => {
       if (faltantes.length > 0) {
         try {
           await sendPushNotification(row.subscription, {
-            title: "¡Atención super héroe!",
+            title: "Atencion super heroe!",
             body: `super heroe, te falta ${faltantes.join(", ")} por llenar, !llenalo, tu puedes!`,
             icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
             url: "/"
@@ -1252,8 +1252,12 @@ cron.schedule('0 16 * * *', async () => {
   });
 }, { timezone: CRON_TIMEZONE });
 
-
-// Endpoint para obtener la clave pública VAPID
+/**
+ * GET /vapid-public-key
+ * Retorna la clave pública VAPID como texto plano para uso en la llamada
+ * PushManager.subscribe() del navegador.
+ * @returns {string}
+ */
 app.get('/vapid-public-key', (req, res) => {
   res.type('text/plain').send(process.env.VAPID_PUBLIC_KEY);
 });

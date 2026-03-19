@@ -6,7 +6,13 @@ import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/d
 import { buildWhere } from '../../helpers/queryBuilder.js';
 const router = express.Router();
 
-// GET /chequeo_alturas/search -> búsqueda por query params (opcional)
+/**
+ * GET /adminsitrador_gruaman/chequeo_alturas/search
+ * Búsqueda flexible por query string en registros de inspección de trabajo en alturas.
+ * Asigna automáticamente `fecha_to` a hoy cuando `fecha_from` se proporciona sin fecha de fin.
+ * @query {{ nombre_cliente?, nombre_proyecto?, fecha?, fecha_from?, fecha_to?, nombre_operador?, cargo?, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array }}
+ */
 router.get('/chequeo_alturas/search', async (req, res) => {
   try {
     const pool = global.db;
@@ -24,7 +30,13 @@ router.get('/chequeo_alturas/search', async (req, res) => {
   }
 });
 
-// POST /buscar -> filtros en body JSON
+/**
+ * POST /adminsitrador_gruaman/buscar
+ * Busca registros de inspección de trabajo en alturas usando filtros del body.
+ * Retorna una estructura normalizada con una propiedad `raw` que contiene la fila original de la BD.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array<{ fecha: string, nombre: string, cedula: string|null, empresa: string, obra: string, constructora: string, raw: object }> }}
+ */
 router.post('/buscar', async (req, res) => {
   try {
     const pool = global.db;
@@ -68,7 +80,11 @@ router.post('/buscar', async (req, res) => {
   }
 });
 
-// genera PDF de una inspección en una sola hoja (Buffer)
+/**
+ * Genera un PDF de registro único para una inspección de trabajo en alturas.
+ * @param {object} r - Fila de BD de chequeo_alturas.
+ * @returns {Promise<Buffer>}
+ */
 async function generarPDFPorChequeoAlturas(r) {
   return new Promise((resolve, reject) => {
     try {
@@ -85,7 +101,6 @@ async function generarPDFPorChequeoAlturas(r) {
       doc.text(`Operador: ${r.nombre_operador || ''}`);
       doc.text(`Cargo: ${r.cargo || ''}`);
       doc.moveDown();
-      // incluir campos importantes de chequeo_alturas
       const campos = [
         'sintomas_fisicos','medicamento','consumo_sustancias','condiciones_fisicas_mentales','lugar_trabajo_demarcado',
         'inspeccion_medios_comunicacion','equipo_demarcado_seguro','base_libre_empozamiento','iluminacion_trabajos_nocturnos',
@@ -106,7 +121,15 @@ async function generarPDFPorChequeoAlturas(r) {
   });
 }
 
-// POST /descargar -> genera XLSX o ZIP de PDFs
+/**
+ * POST /adminsitrador_gruaman/descargar
+ * Exporta registros filtrados de inspección de trabajo en alturas en el formato solicitado.
+ * - `excel`: XLSX con todas las columnas en una tabla estilizada.
+ * - `pdf`: archivo ZIP con un PDF por registro.
+ * - Por defecto: CSV con las columnas identificadoras principales.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, formato?: 'excel'|'pdf'|'csv', limit?: number }}
+ * @returns {Buffer} Adjunto en el formato solicitado.
+ */
 router.post('/descargar', async (req, res) => {
   try {
     const pool = global.db;
@@ -130,7 +153,6 @@ router.post('/descargar', async (req, res) => {
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Chequeo Alturas');
 
-      // Si no hay filas, devolver un libro vacío con una hoja y salir
       if (!q.rows || q.rows.length === 0) {
         res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition','attachment; filename=chequeo_alturas.xlsx');
@@ -183,7 +205,7 @@ router.post('/descargar', async (req, res) => {
       return;
     }
 
-    // fallback CSV
+    // CSV fallback
     const header = ['id','fecha','operador','obra','cliente'];
     const lines = [header.join(',')];
     for (const r of q.rows) {

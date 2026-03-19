@@ -10,7 +10,13 @@ import { buildWhere } from '../../helpers/queryBuilder.js';
 dotenv.config();
 const router = express.Router();
 
-// GET /checklist/search -> búsqueda por query params (opcional)
+/**
+ * GET /administrador_bomberman/checklist/search
+ * Búsqueda flexible por query string en registros de checklist de bomba.
+ * Asigna automáticamente `fecha_to` a hoy cuando `fecha_from` se proporciona sin fecha de fin.
+ * @query {{ nombre_cliente?, nombre_proyecto?, fecha?, fecha_from?, fecha_to?, nombre_operador?, bomba_numero?, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array }}
+ */
 router.get('/checklist/search', async (req, res) => {
   try {
     const pool = global.db;
@@ -19,7 +25,6 @@ router.get('/checklist/search', async (req, res) => {
     const { where, values } = buildWhere(req.query, allowed);
     const limit = Math.min(200, parseInt(req.query.limit) || 100);
     const offset = parseInt(req.query.offset) || 0;
-    // Cambia lista_chequeo por checklist
     const finalQuery = `SELECT * FROM checklist ${where} ORDER BY id DESC LIMIT $${values.length+1} OFFSET $${values.length+2}`;
     const q = await pool.query(finalQuery, [...values, limit, offset]);
     res.json({ success: true, count: q.rowCount, rows: q.rows });
@@ -29,7 +34,14 @@ router.get('/checklist/search', async (req, res) => {
   }
 });
 
-// POST /buscar -> filtros en body JSON
+/**
+ * POST /administrador_bomberman/buscar
+ * Busca registros de checklist usando filtros del body.
+ * Solo retorna registros que contengan al menos un campo con valor REGULAR o MALO.
+ * Retorna una estructura normalizada con una propiedad `raw` que contiene la fila filtrada.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array<{ fecha: string, nombre: string, cedula: null, empresa: string, obra: string, constructora: string, raw: object }> }}
+ */
 router.post('/buscar', async (req, res) => {
   try {
     const pool = global.db;
@@ -51,13 +63,17 @@ router.post('/buscar', async (req, res) => {
     if (endDate) { clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`); values.push(endDate); }
 
     const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
-    // Cambia lista_chequeo por checklist
     const q = await pool.query(
       `SELECT * FROM checklist ${where} ORDER BY id DESC LIMIT $${idx} OFFSET $${idx+1}`,
       [...values, Math.min(1000, parseInt(limit) || 200), parseInt(offset) || 0]
     );
 
-    // Solo mostrar registros que tengan al menos un campo REGULAR/MALO
+    /**
+     * Filtra una fila de checklist para incluir solo campos con valores REGULAR/MALO más los campos de encabezado.
+     * Retorna null si no se encontraron campos problemáticos.
+     * @param {object} row
+     * @returns {object|null}
+     */
     function filtraChecklist(row) {
       const resultado = {};
       let tieneRegularMalo = false;
@@ -68,20 +84,11 @@ router.post('/buscar', async (req, res) => {
         ) {
           resultado[k] = v;
           tieneRegularMalo = true;
-          // incluir observación si existe
           const obsKey = k + "_observacion";
           if (row[obsKey]) resultado[obsKey] = row[obsKey];
         }
-        // incluir campos básicos para mostrar en la lista
         if (
-          [
-            "id",
-            "fecha_servicio",
-            "nombre_operador",
-            "bomba_numero",
-            "nombre_proyecto",
-            "nombre_cliente"
-          ].includes(k)
+          ["id","fecha_servicio","nombre_operador","bomba_numero","nombre_proyecto","nombre_cliente"].includes(k)
         ) {
           resultado[k] = v;
         }
@@ -109,7 +116,15 @@ router.post('/buscar', async (req, res) => {
   }
 });
 
-// genera PDF de una inspección usando SOLO el template, si no existe lanza error
+/**
+ * Genera un buffer PDF de un registro de checklist usando la plantilla XLSX y LibreOffice.
+ * Sustituye los marcadores `{{campo}}` en todas las celdas del libro.
+ * Requiere la plantilla en una de tres rutas candidatas y LibreOffice instalado.
+ * También se exporta para uso en la ruta de envío de checklist.
+ * @param {object} r - Fila de BD de checklist (o fila parcial con al menos los campos de encabezado).
+ * @returns {Promise<Buffer>}
+ * @throws {Error} Si no se encuentra la plantilla o LibreOffice no está disponible.
+ */
 async function generarPDFPorChecklist(r) {
   try {
     const candidatePaths = [
@@ -148,7 +163,6 @@ async function generarPDFPorChecklist(r) {
     const xlsxBuf = await workbook.xlsx.writeBuffer();
 
     process.env.LIBREOFFICE_PATH = process.env.LIBREOFFICE_PATH || "/Applications/LibreOffice.app/Contents/MacOS/soffice";
-    // Antes de llamar a libre.convert, verifica si el binario existe
     const sofficePath = process.env.LIBREOFFICE_PATH || "/Applications/LibreOffice.app/Contents/MacOS/soffice";
     if (!fs.existsSync(sofficePath)) {
       throw new Error('LibreOffice (soffice) no está instalado en el entorno. No es posible generar PDF con layout en Render.');
@@ -167,6 +181,12 @@ async function generarPDFPorChecklist(r) {
   }
 }
 
+/**
+ * Construye un mapa { [nombre_obra]: sede } uniendo obras con departamentos.
+ * Retorna un objeto vacío si las tablas subyacentes no existen.
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<Record<string, string>>}
+ */
 async function buildSedeMap(pool) {
   const sedeMap = {};
   try {
@@ -182,8 +202,19 @@ async function buildSedeMap(pool) {
   return sedeMap;
 }
 
-// POST /descargar -> genera XLSX o ZIP de PDFs
-// Acepta tanto /descargar como /checklist_admin/descargar para compatibilidad con el front
+/**
+ * POST /administrador_bomberman/descargar
+ * Exporta registros filtrados de checklist en el formato solicitado.
+ * - `excel`: XLSX con columnas comprimidas para mostrar solo estados no "buenos".
+ *   Los campos con BUENO/SI/LIMPIO/REALIZADO/etc. se dejan en blanco; las columnas sin
+ *   valores no vacíos se omiten por completo para reducir el ruido.
+ * - `pdf`: archivo ZIP generado mediante LibreOffice desde la plantilla XLSX.
+ *   Solo se incluyen registros con al menos un campo REGULAR/MALO.
+ * - Por defecto: CSV de los registros filtrados.
+ * También responde a la ruta alias `/checklist_admin/descargar`.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, formato?: 'excel'|'pdf'|'csv', limit?: number }}
+ * @returns {Buffer} Adjunto en el formato solicitado.
+ */
 router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
   try {
     const pool = global.db;
@@ -203,7 +234,6 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
     const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
     const q = await pool.query(`SELECT * FROM checklist ${where} ORDER BY id DESC LIMIT $${idx}`, [...values, Math.min(50000, parseInt(limit) || 10000)]);
 
-    // Solo mostrar registros que tengan al menos un campo REGULAR/MALO
     function filtraChecklist(row) {
       const resultado = {};
       let tieneRegularMalo = false;
@@ -218,14 +248,7 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
           if (row[obsKey]) resultado[obsKey] = row[obsKey];
         }
         if (
-          [
-            "id",
-            "fecha_servicio",
-            "nombre_operador",
-            "bomba_numero",
-            "nombre_proyecto",
-            "nombre_cliente"
-          ].includes(k)
+          ["id","fecha_servicio","nombre_operador","bomba_numero","nombre_proyecto","nombre_cliente"].includes(k)
         ) {
           resultado[k] = v;
         }
@@ -250,11 +273,9 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
         row.sede = sedeMap[row.nombre_proyecto] || '';
       }
 
-      // Campos de identificación: siempre visibles
       const camposBasicos = new Set(['id', 'empresa_id', 'signio_transaccion_id', 'fecha_servicio',
         'nombre_cliente', 'nombre_proyecto', 'sede', 'nombre_operador', 'bomba_numero', 'horometro_motor', 'observaciones']);
 
-      // Campos de texto libre / numéricos / fechas: siempre mostrar su valor
       const noSeleccion = new Set([
         'radio_marca_serial_estado', 'arnes_marca_serial_fecha_estado', 'eslinga_marca_serial_fecha_estado',
         'combustible_pimpinas', 'ultima_fecha_lavado_tanque', 'dias_grasa', 'punto_engrase_tapado',
@@ -262,12 +283,10 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
         'mangueras_sin_acoples', 'numero_piso_fundiendo', 'cantidad_puntos_anclaje', 'ultima_fecha_medicion_espesores'
       ]);
 
-      // Valores "buenos" que se omiten en campos de selección
       const valoresBueno = new Set(['BUENO', 'SI', 'LIMPIO', 'REALIZADO', 'NORMAL', 'NO FALTAN', 'CUMPLE CON LAS CONDICIONES']);
 
       const allKeys = Object.keys(q.rows[0]);
 
-      // Procesar filas: blanquear campos selección con valor "bueno/si"
       const processedRows = q.rows.map(row => {
         const result = {};
         allKeys.forEach(k => {
@@ -291,14 +310,12 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
             result[k] = val ? String(val) : '';
             return;
           }
-          // Campo de selección: mostrar solo si NO es "bueno/si"
           const valUpper = String(val).trim().toUpperCase();
           result[k] = valoresBueno.has(valUpper) ? '' : String(val);
         });
         return result;
       });
 
-      // Incluir solo columnas que tengan al menos un valor no vacío (excepto básicos que van siempre)
       const keysToInclude = allKeys.filter(k =>
         camposBasicos.has(k) || processedRows.some(r => r[k] !== '' && r[k] != null)
       );
@@ -338,7 +355,6 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
       archive.pipe(res);
       for (const r of filtrados) {
         try {
-          // SOLO usar generarPDFPorChecklist (que usa libreoffice y el template)
           const pdfBuf = await generarPDFPorChecklist(r);
           archive.append(pdfBuf, { name: `checklist_${r.id}.pdf` });
         } catch (pdfErr) {
@@ -349,7 +365,7 @@ router.post(['/descargar', '/checklist_admin/descargar'], async (req, res) => {
       return;
     }
 
-    // fallback CSV
+    // CSV fallback
     const keys = filtrados[0] ? Object.keys(filtrados[0]) : [];
     const header = keys.length ? keys : ['id','fecha','operador','obra','cliente'];
     const lines = [header.join(',')];

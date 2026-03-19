@@ -1,7 +1,15 @@
 import express from "express";
 const router = express.Router();
 
-// GET /admin_obras/listar?empresa_id=2&offset=0&limit=10&busqueda=La Pepita
+/**
+ * GET /admin_obras/listar
+ * Retorna una lista paginada y opcionalmente filtrada de obras para una empresa dada.
+ * @query {number} [empresa_id=2]
+ * @query {number} [offset=0]
+ * @query {number} [limit=10]
+ * @query {string} [busqueda] - Coincidencia parcial sin distinción de mayúsculas en `nombre_obra`.
+ * @returns {{ success: boolean, total: number, obras: Array }}
+ */
 router.get("/listar", async (req, res) => {
   try {
     const pool = global.db;
@@ -26,7 +34,13 @@ router.get("/listar", async (req, res) => {
   }
 });
 
-// POST /admin_obras/agregar
+/**
+ * POST /admin_obras/agregar
+ * Crea una nueva obra, geocodificando la dirección suministrada para obtener coordenadas.
+ * @body {{ nombre_obra: string, empresa_id: number, direccion: string, ciudad: string, constructora: string, activa?: boolean }}
+ * @returns {{ success: boolean, obra: object }}
+ * @throws {400} Si faltan campos obligatorios o la geocodificación falla.
+ */
 router.post("/agregar", async (req, res) => {
   try {
     const pool = global.db;
@@ -36,7 +50,6 @@ router.post("/agregar", async (req, res) => {
       console.error('[admin_obras/agregar] Faltan datos obligatorios:', { nombre_obra, empresa_id, direccion, ciudad, constructora });
       return res.status(400).json({ success: false, error: "Faltan datos obligatorios" });
     }
-    // Geocodifica la dirección en Colombia
     try {
       const { geocodeColombia } = await import('../../scripts/geocode_colombia.js');
       const direccionCompleta = `${direccion}, ${ciudad}, Colombia`;
@@ -58,7 +71,15 @@ router.post("/agregar", async (req, res) => {
   }
 });
 
-// PATCH /admin_obras/estado/:id
+/**
+ * PATCH /admin_obras/estado/:id
+ * Alterna el estado activo/inactivo de una obra.
+ * @param {string} id - ID de la obra.
+ * @body {{ activa: boolean }}
+ * @returns {{ success: boolean, obra: { id, nombre_obra, activa } }}
+ * @throws {400} Si `activa` no es booleano.
+ * @throws {404} Si la obra no existe.
+ */
 router.patch("/estado/:id", async (req, res) => {
   try {
     const pool = global.db;

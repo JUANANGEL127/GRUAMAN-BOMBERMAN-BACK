@@ -5,8 +5,10 @@ import { enviarDocumentoAFirmar } from '../signio.js';
 import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = express.Router();
 
-// Accede a global.db dentro de cada handler para garantizar que la DB
-// ya esté inicializada en el momento de usar el router (no al importar el módulo).
+/**
+ * Proxy de BD diferido — resuelve global.db en el momento de la llamada para evitar capturar
+ * una referencia al pool sin inicializar cuando el módulo se importa por primera vez.
+ */
 const db = {
   query: (...args) => {
     if (!global.db) throw new Error("global.db no está disponible");
@@ -16,12 +18,21 @@ const db = {
 
 const CRON_TIMEZONE = 'America/Bogota';
 
-// Lock en memoria para evitar race conditions en inserts simultáneos
+/**
+ * Conjunto de bloqueos en memoria para prevenir inserciones duplicadas de ingreso concurrentes
+ * para la misma combinación de operador/fecha/hora.
+ * @type {Set<string>}
+ */
 const _ingresoEnProceso = new Set();
 
-// Calcula hora_salida = hora_ingreso + 7h20min (7.33 horas)
+/**
+ * Calcula la hora de salida esperada como hora_ingreso + 7 h 20 min.
+ * Retorna null si la entrada no puede parsearse como "HH:MM".
+ * @param {string} horaIngreso - Cadena de hora en formato "HH:MM[:SS]".
+ * @returns {string|null} Hora de salida en "HH:MM", o null en caso de fallo al parsear.
+ */
 function calcularHoraSalida(horaIngreso) {
-  const str = String(horaIngreso ?? '').slice(0, 5); // "HH:MM"
+  const str = String(horaIngreso ?? '').slice(0, 5);
   const [hh, mm] = str.split(':').map(Number);
   if (isNaN(hh) || isNaN(mm)) return null;
   let salidaHoras = hh + 7;
@@ -34,11 +45,15 @@ function calcularHoraSalida(horaIngreso) {
   return `${String(salidaHoras).padStart(2, '0')}:${String(salidaMinutos).padStart(2, '0')}`;
 }
 
-// Completar horas de salida faltantes para una fecha.
-// Para cada operador: toma el PRIMER registro sin salida (menor hora_ingreso) y le suma 7h20min.
+/**
+ * Completa las horas de salida faltantes para todos los operadores en una fecha dada.
+ * Para cada operador, toma el registro abierto más antiguo (sin hora_salida) y
+ * establece hora_salida = hora_ingreso + 7 h 20 min.
+ * @param {string|null} fecha - Fecha "YYYY-MM-DD" a procesar; por defecto ayer.
+ * @returns {Promise<{ fecha: string, actualizados: Array<{ id: number, nombre_operador: string, hora_ingreso: string, hora_salida: string }> }>}
+ */
 async function completarSalidasParaFecha(fecha) {
   const fechaStr = fecha || DateTime.now().setZone(CRON_TIMEZONE).minus({ days: 1 }).toISODate();
-  // Primer registro sin salida de cada operador ese día (ORDER BY hora_ingreso ASC, LIMIT 1 por operador)
   const { rows } = await db.query(
     `SELECT DISTINCT ON (h.nombre_operador) h.id, h.nombre_operador, h.hora_ingreso, h.fecha_servicio
      FROM horas_jornada h
@@ -65,9 +80,10 @@ async function completarSalidasParaFecha(fecha) {
   return { fecha: fechaStr, actualizados };
 }
 
-// 12:00am (medianoche) - Completar horas de salida faltantes del día anterior
-// Para cada operador: completa el PRIMER registro sin salida del día con hora_ingreso + 7h20min
-// Corre a las 5:00 AM UTC = 12:00 AM Colombia (UTC-5)
+/**
+ * Tarea programada: completa las horas de salida pendientes del día calendario anterior.
+ * Se ejecuta diariamente a las 00:00 hora Colombia (05:00 UTC).
+ */
 cron.schedule('0 5 * * *', async () => {
   try {
     const ahora = DateTime.now().setZone(CRON_TIMEZONE);
@@ -81,10 +97,13 @@ cron.schedule('0 5 * * *', async () => {
   }
 });
 
-// Al iniciar (o al despertar del servidor): completar salidas pendientes de ayer y anteayer.
-// Si el servidor estuvo dormido a medianoche, el cron no corrió; al despertar esto lo corrige.
+/**
+ * Recuperación al inicio: completa las horas de salida pendientes de ayer y anteayer.
+ * Protege contra el caso en que el cron no se haya ejecutado mientras el servidor estuvo caído.
+ * Se ejecuta 8 segundos después de cargar el módulo para permitir que el pool de BD se inicialice.
+ */
 (function ejecutarCompletarSalidasAlIniciar() {
-  const delayMs = 8000; // dar tiempo a que la DB y el app estén listos
+  const delayMs = 8000;
   setTimeout(async () => {
     try {
       const hoy = DateTime.now().setZone(CRON_TIMEZONE);
@@ -106,41 +125,49 @@ cron.schedule('0 5 * * *', async () => {
   }, delayMs);
 })();
 
-// Normaliza la fecha de entrada a YYYY-MM-DD sin alterar el día
+/**
+ * Extrae una cadena "YYYY-MM-DD" simple de cualquier entrada similar a fecha sin
+ * introducir desfases de zona horaria. Retorna null si la entrada no puede parsearse.
+ * @param {string|Date|null} fechaInput
+ * @returns {string|null}
+ */
 function normalizeFechaToBogota(fechaInput) {
   if (!fechaInput) return null;
   try {
-    // Si viene como string simple "YYYY-MM-DD", usarla directamente
     const soloFecha = String(fechaInput).split('T')[0];
     if (/^\d{4}-\d{2}-\d{2}$/.test(soloFecha)) {
       return soloFecha;
     }
-    
-    // Si viene como timestamp completo, parsearlo y extraer la fecha
+
     const dt = DateTime.fromISO(String(fechaInput));
     if (dt.isValid) {
-      // Usar toISODate() directo sin setZone para mantener la fecha original
       return dt.toISODate();
     }
-    
-    // Fallback: intentar con Date nativo
+
     const d = new Date(fechaInput);
     if (!isNaN(d.getTime())) {
-      // Extraer año, mes, día en UTC para evitar desfases de zona horaria
       const year = d.getUTCFullYear();
       const month = String(d.getUTCMonth() + 1).padStart(2, '0');
       const day = String(d.getUTCDate()).padStart(2, '0');
       return `${year}-${month}-${day}`;
     }
-    
+
     return null;
   } catch (e) {
     return null;
   }
 }
 
-// POST /horas_jornada/ingreso
-// Body esperado: { nombre_cliente, nombre_proyecto, fecha_servicio, nombre_operador, cargo?, empresa_id, hora_ingreso }
+/**
+ * POST /horas_jornada/ingreso
+ * Crea un nuevo registro de ingreso para un operador en una fecha de servicio dada.
+ * Rechaza si ya existe un registro abierto (sin hora_salida) para ese par operador/fecha.
+ * Un bloqueo en memoria previene condiciones de carrera en solicitudes duplicadas simultáneas.
+ * @body {{ nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, empresa_id: number, hora_ingreso: string, nombre_cliente?: string, cargo?: string, minutos_almuerzo?: number }}
+ * @returns {{ success: boolean, id: number }}
+ * @throws {400} Si faltan campos requeridos o fecha_servicio es inválida.
+ * @throws {409} Si hay una inserción concurrente en progreso o ya existe un registro abierto.
+ */
 router.post("/ingreso", async (req, res) => {
   const {
     nombre_cliente,
@@ -153,12 +180,10 @@ router.post("/ingreso", async (req, res) => {
     minutos_almuerzo
   } = req.body || {};
 
-  // nombre_cliente es opcional: puede llegar vacío si la carga de obras falló en el front
   if (!nombre_proyecto || !fecha_servicio || !nombre_operador || !empresa_id || !hora_ingreso) {
     return res.status(400).json({ error: "Faltan parámetros obligatorios: nombre_proyecto, fecha_servicio, nombre_operador, empresa_id, hora_ingreso" });
   }
 
-  // Lock en memoria: bloquea requests simultáneos del mismo operador+fecha+hora
   const lockKey = `${nombre_operador}|${fecha_servicio}|${hora_ingreso}`;
   if (_ingresoEnProceso.has(lockKey)) {
     return res.status(409).json({ error: "Registro en proceso, por favor espera un momento." });
@@ -169,7 +194,6 @@ router.post("/ingreso", async (req, res) => {
     const fechaDia = normalizeFechaToBogota(fecha_servicio);
     if (!fechaDia) return res.status(400).json({ error: "fecha_servicio inválida" });
 
-    // Verificar si hay un registro abierto (sin hora de salida) para ese operador y fecha
     const registroAbierto = await db.query(
       `SELECT id, hora_ingreso FROM horas_jornada
        WHERE nombre_operador = $1
@@ -188,7 +212,6 @@ router.post("/ingreso", async (req, res) => {
       });
     }
 
-    // Crear nuevo registro de ingreso
     const result = await db.query(
       `INSERT INTO horas_jornada (
         nombre_cliente, nombre_proyecto, fecha_servicio, nombre_operador, cargo, empresa_id, hora_ingreso, minutos_almuerzo
@@ -197,7 +220,7 @@ router.post("/ingreso", async (req, res) => {
       [
         nombre_cliente,
         nombre_proyecto,
-        fechaDia, // guardamos la fecha normalizada (YYYY-MM-DD)
+        fechaDia,
         nombre_operador,
         cargo || null,
         empresa_id,
@@ -215,8 +238,15 @@ router.post("/ingreso", async (req, res) => {
   }
 });
 
-// POST /horas_jornada/salida
-// Body esperado: { nombre_operador, fecha_servicio, hora_salida }
+/**
+ * POST /horas_jornada/salida
+ * Registra la hora de salida para el registro de ingreso abierto más reciente de un operador.
+ * Selecciona el último registro abierto por hora_ingreso DESC.
+ * @body {{ nombre_operador: string, fecha_servicio: string, hora_salida: string }}
+ * @returns {{ success: boolean, id: number }}
+ * @throws {400} Si faltan campos requeridos o fecha_servicio es inválida.
+ * @throws {404} Si no existe un registro de ingreso abierto para ese operador/fecha.
+ */
 router.post("/salida", async (req, res) => {
   const { nombre_operador, fecha_servicio, hora_salida } = req.body || {};
 
@@ -228,7 +258,6 @@ router.post("/salida", async (req, res) => {
     const fechaDia = normalizeFechaToBogota(fecha_servicio);
     if (!fechaDia) return res.status(400).json({ error: "fecha_servicio inválida" });
 
-    // Buscar el último registro sin hora_salida para ese operador y fecha
     const registroPendiente = await db.query(
       `SELECT id, hora_ingreso FROM horas_jornada
        WHERE nombre_operador = $1
@@ -240,7 +269,6 @@ router.post("/salida", async (req, res) => {
     );
 
     if (registroPendiente.rows.length === 0) {
-      // Log para diagnóstico: mostrar cuántos registros existen para ese operador en esa fecha
       const debug = await db.query(
         `SELECT id, hora_ingreso, hora_salida FROM horas_jornada WHERE nombre_operador = $1 AND fecha_servicio = $2::date ORDER BY hora_ingreso ASC`,
         [nombre_operador, fechaDia]
@@ -252,9 +280,7 @@ router.post("/salida", async (req, res) => {
     const registroId = registroPendiente.rows[0].id;
 
     await db.query(
-      `UPDATE horas_jornada
-       SET hora_salida = $1
-       WHERE id = $2`,
+      `UPDATE horas_jornada SET hora_salida = $1 WHERE id = $2`,
       [hora_salida, registroId]
     );
 
@@ -265,9 +291,13 @@ router.post("/salida", async (req, res) => {
   }
 });
 
-// POST /horas_jornada/completar-salidas - Completar salidas faltantes manualmente
-// Body opcional: { fecha: "YYYY-MM-DD" } - si no se envía, usa ayer
-// Útil para corregir datos cuando el cron no corrió o para fechas pasadas
+/**
+ * POST /horas_jornada/completar-salidas
+ * Dispara manualmente el relleno de horas de salida para una fecha dada.
+ * Útil para corregir datos cuando el cron programado no se ejecutó.
+ * @body {{ fecha?: string }} Fecha opcional "YYYY-MM-DD"; por defecto ayer.
+ * @returns {{ success: boolean, fecha: string, actualizados: number, detalle: Array }}
+ */
 router.post("/completar-salidas", async (req, res) => {
   try {
     const fecha = req.body?.fecha ? normalizeFechaToBogota(req.body.fecha) : null;
@@ -284,7 +314,11 @@ router.post("/completar-salidas", async (req, res) => {
   }
 });
 
-// GET /horas_jornada - devuelve los últimos 100 registros (solo para verificar envío desde el front)
+/**
+ * GET /horas_jornada
+ * Retorna los 100 registros de horas de jornada más recientes ordenados por fecha de servicio descendente.
+ * @returns {{ count: number, rows: Array }}
+ */
 router.get("/", async (req, res) => {
   try {
     const q = await db.query(`SELECT * FROM horas_jornada ORDER BY fecha_servicio DESC LIMIT 100`);

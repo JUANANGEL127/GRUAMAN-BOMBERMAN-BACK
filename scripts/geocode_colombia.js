@@ -1,9 +1,11 @@
 import fetch from 'node-fetch';
 
 /**
- * Convierte una dirección en Colombia a latitud y longitud usando Nominatim (OpenStreetMap)
- * @param {string} direccion - Dirección completa (incluye ciudad y municipio)
- * @returns {Promise<{latitud: number, longitud: number}>}
+ * Resuelve una dirección colombiana a coordenadas geográficas usando la API de geocodificación LocationIQ.
+ * La cadena ", Colombia" se agrega automáticamente antes de enviar la solicitud.
+ * @param {string} direccion - Dirección completa incluyendo ciudad y municipio.
+ * @returns {Promise<{ latitud: number, longitud: number }>}
+ * @throws {Error} Cuando no se retornan resultados para la dirección dada.
  */
 export async function geocodeColombia(direccion) {
   const apiKey = 'pk.647f45aa096141deca59e4a30e07c696';

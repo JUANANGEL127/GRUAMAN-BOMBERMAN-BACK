@@ -3,18 +3,41 @@ import { enviarDocumentoAFirmar } from '../signio.js';
 import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
 const router = Router();
 
-// Middleware: verifica disponibilidad de la DB
 router.use((req, res, next) => {
   if (!global.db) return res.status(503).json({ error: "DB no disponible" });
   next();
 });
 
-// POST: guarda un registro de chequeo en alturas
+/**
+ * Normaliza un valor verdadero/falso a la restricción "SI" | "NO" | "NA" esperada por la BD.
+ * @param {*} val
+ * @returns {"SI"|"NO"|"NA"}
+ */
+function normalizeOption(val) {
+  if (val === undefined || val === null) return "NA";
+  if (typeof val === "boolean") return val ? "SI" : "NO";
+  if (typeof val === "number") return val === 1 ? "SI" : (val === 0 ? "NO" : "NA");
+  if (typeof val === "string") {
+    const s = val.trim().toLowerCase();
+    if (["si","s","yes","y","1"].includes(s)) return "SI";
+    if (["no","n","not","0"].includes(s)) return "NO";
+    if (s === "" || ["na","n/a","none","null","undefined"].includes(s)) return "NA";
+    return "NA";
+  }
+  return "NA";
+}
+
+/**
+ * POST /compartido/chequeo_alturas
+ * Inserta un registro de inspección de seguridad en alturas.
+ * @body {{ nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, cargo: string, [field: string]: any }}
+ * @returns {{ message: string, id: number }}
+ * @throws {400} Si faltan campos requeridos.
+ */
 router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
 
-  // Campos obligatorios
   const required = ["nombre_cliente","nombre_proyecto","fecha_servicio","nombre_operador","cargo"];
   const faltantes = required.filter(k => {
     const v = body[k];
@@ -22,7 +45,6 @@ router.post("/", async (req, res) => {
   });
   if (faltantes.length) return res.status(400).json({ error: "Faltan campos requeridos", faltantes });
 
-  // Campos tipo opción
   const optionFields = new Set([
     "sintomas_fisicos","medicamento","consumo_sustancias","condiciones_fisicas_mentales",
     "lugar_trabajo_demarcado","inspeccion_medios_comunicacion","equipo_demarcado_seguro","base_libre_empozamiento",
@@ -33,19 +55,6 @@ router.post("/", async (req, res) => {
     "consignacion_circuito","circuitos_identificados","cinco_reglas_oro","trabajo_con_tension_protocolo",
     "informacion_riesgos_trabajadores","distancias_minimas_seguridad","tablero_libre_elementos_riesgo","cables_en_buen_estado"
   ]);
-  function normalizeOption(val) {
-    if (val === undefined || val === null) return "NA";
-    if (typeof val === "boolean") return val ? "SI" : "NO";
-    if (typeof val === "number") return val === 1 ? "SI" : (val === 0 ? "NO" : "NA");
-    if (typeof val === "string") {
-      const s = val.trim().toLowerCase();
-      if (["si","s","yes","y","1"].includes(s)) return "SI";
-      if (["no","n","not","0"].includes(s)) return "NO";
-      if (s === "" || ["na","n/a","none","null","undefined"].includes(s)) return "NA";
-      return "NA";
-    }
-    return "NA";
-  }
 
   const fields = [
     "nombre_cliente","nombre_proyecto","fecha_servicio","nombre_operador","cargo",
@@ -78,7 +87,12 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET: lista los registros de chequeo en alturas (últimos 200 por defecto)
+/**
+ * GET /compartido/chequeo_alturas
+ * Retorna los registros de inspección de seguridad en alturas más recientes.
+ * @query {number} [limit=200]
+ * @returns {{ registros: Array }}
+ */
 router.get("/", async (req, res) => {
   const db = global.db;
   try {

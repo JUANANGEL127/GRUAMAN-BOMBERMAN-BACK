@@ -7,7 +7,6 @@ import { generarPDF as generarPDFHelper, generarPDFYEnviarAFirmar } from '../../
 
 const router = Router();
 
-// Middleware para verificar si la base de datos está disponible
 router.use((req, res, next) => {
   if (!global.db) {
     console.error("DB no disponible en middleware de planillabombeo");
@@ -16,44 +15,54 @@ router.use((req, res, next) => {
   next();
 });
 
-// Formatea un valor de hora para garantizar que esté en formato HH:MM o HH:MM:SS
+/**
+ * Lista fija de destinatarios para los correos de planillas de bombeo salientes.
+ * @type {string[]}
+ */
+const correosFijos = [
+  "desarrolloit@gruasyequipos.com"
+];
+
+/**
+ * Normaliza una cadena de hora cruda al formato "HH:MM" o "HH:MM:SS".
+ * Acepta "HH:MM", "HH:MM:SS", un dígito de hora suelto, o una secuencia de 3 a 4 dígitos.
+ * Retorna la cadena original sin cambios si ningún patrón coincide.
+ * @param {string} value
+ * @returns {string}
+ */
 function formatTime(value) {
-  // Si ya está en formato HH:MM o HH:MM:SS, lo retorna igual
   if (/^\d{2}:\d{2}(:\d{2})?$/.test(value)) return value;
-  // Si es solo hora (ej: "8" o "15"), lo convierte a "08:00"
   if (/^\d{1,2}$/.test(value)) return value.padStart(2, "0") + ":00";
-  // Si es hora y minutos sin separador (ej: "804"), lo convierte a "08:04"
   if (/^\d{3,4}$/.test(value)) {
     let h = value.length === 3 ? value.slice(0,1) : value.slice(0,2);
     let m = value.length === 3 ? value.slice(1) : value.slice(2);
     return h.padStart(2, "0") + ":" + m.padStart(2, "0");
   }
-  return value; // Si no coincide, lo retorna igual (puede fallar en SQL)
+  return value;
 }
 
-// Genera un archivo PDF con la información de la planilla y las remisiones
+/**
+ * Genera un buffer PDF con el resumen de una planilla de bombeo y sus remisiones asociadas.
+ * @param {object} planilla - Datos del encabezado de la planilla de bombeo.
+ * @param {Array<object>} remisiones - Lista de registros de remisión vinculados a la planilla.
+ * @returns {Promise<Buffer>}
+ */
 async function generarPDF(planilla, remisiones) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument();
     const buffers = [];
 
     doc.on("data", buffers.push.bind(buffers));
-    doc.on("end", () => {
-      const pdfData = Buffer.concat(buffers);
-      resolve(pdfData);
-    });
-
+    doc.on("end", () => resolve(Buffer.concat(buffers)));
     doc.on("error", (error) => {
       console.error("Error al generar el PDF:", error);
       reject(error);
     });
 
     try {
-      // Título
       doc.fontSize(20).text("Planilla de Bombeo", { align: "center" });
       doc.moveDown();
 
-      // Información de la planilla
       doc.fontSize(12).text(`Cliente: ${planilla.nombre_cliente || "N/A"}`);
       doc.text(`Proyecto: ${planilla.nombre_proyecto || "N/A"}`);
       doc.text(`Fecha de Servicio: ${planilla.fecha_servicio || "N/A"}`);
@@ -68,7 +77,6 @@ async function generarPDF(planilla, remisiones) {
       doc.text(`Total Metros Bombeados: ${planilla.total_metros_cubicos_bombeados || "N/A"}`);
       doc.moveDown();
 
-      // Información de las remisiones
       if (remisiones && remisiones.length > 0) {
         doc.fontSize(14).text("Remisiones:");
         remisiones.forEach((rem, index) => {
@@ -94,18 +102,24 @@ async function generarPDF(planilla, remisiones) {
   });
 }
 
-// Envía un correo con el PDF generado como adjunto
+/**
+ * Envía un PDF de planilla de bombeo a los destinatarios indicados por correo electrónico.
+ * Usa credenciales de Gmail hardcodeadas — deben migrarse a variables de entorno.
+ * @param {string[]} destinatarios
+ * @param {Buffer} pdfBuffer
+ * @returns {Promise<void>}
+ */
 async function enviarCorreo(destinatarios, pdfBuffer) {
   const transporter = nodemailer.createTransport({
-    service: "gmail", // Usar el servicio de Gmail
+    service: "gmail",
     auth: {
-      user: "davidl.lamprea810@gmail.com", // Correo proporcionado
-      pass: "qeut vziy axsg rceb", // Contraseña de aplicación proporcionada
+      user: "davidl.lamprea810@gmail.com",
+      pass: "qeut vziy axsg rceb",
     },
   });
 
   await transporter.sendMail({
-    from: '"Planilla de Bombeo" <davidl.lamprea810@gmail.com>', // Correo del remitente
+    from: '"Planilla de Bombeo" <davidl.lamprea810@gmail.com>',
     to: destinatarios.join(", "),
     subject: "Planilla de Bombeo",
     text: "Adjunto encontrarás la planilla de bombeo generada.",
@@ -118,12 +132,16 @@ async function enviarCorreo(destinatarios, pdfBuffer) {
   });
 }
 
-// Lista de correos fijos a los que se enviará el PDF
-const correosFijos = [
-  "desarrolloit@gruasyequipos.com"
-];
-
-// Endpoint para guardar una nueva planilla de bombeo
+/**
+ * POST /bomberman/planillabombeo
+ * Inserta un registro de planilla de bombeo junto con sus remisiones asociadas,
+ * genera un resumen en PDF y lo envía por correo electrónico.
+ * Las remisiones se validan individualmente: `remision`, `hora_llegada`, `hora_inicial`,
+ * `hora_final`, `metros` y `manguera` son obligatorios en cada entrada.
+ * @body {{ nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string, bomba_numero: string, galones_inicio_acpm: number, galones_final_acpm: number, galones_pinpina: number, horometro_inicial: number, horometro_final: number, nombre_operador: string, nombre_auxiliar: string, total_metros_cubicos_bombeados: number, remisiones: Array<{ remision: string, hora_llegada: string, hora_inicial: string, hora_final: string, metros: number, manguera: string, observaciones?: string }> }}
+ * @returns {{ message: string, planilla_bombeo_id: number }}
+ * @throws {400} Si faltan campos requeridos o las remisiones están ausentes o mal formadas.
+ */
 router.post("/", async (req, res) => {
   const db = global.db;
   if (!db) {
@@ -147,24 +165,6 @@ router.post("/", async (req, res) => {
     remisiones,
   } = req.body;
 
-  // Verificar los datos recibidos
-  console.log("Datos de la planilla:", {
-    nombre_cliente,
-    nombre_proyecto,
-    fecha_servicio,
-    bomba_numero,
-    galones_inicio_acpm,
-    galones_final_acpm,
-    galones_pinpina,
-    horometro_inicial,
-    horometro_final,
-    nombre_operador,
-    nombre_auxiliar,
-    total_metros_cubicos_bombeados,
-  });
-  console.log("Remisiones recibidas:", remisiones);
-
-  // Validar parámetros obligatorios y devolver detalle de lo que falta
   const faltantes = [];
   if (!nombre_cliente) faltantes.push("nombre_cliente");
   if (!nombre_proyecto) faltantes.push("nombre_proyecto");
@@ -189,9 +189,8 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    // 1. Insertar la planilla de bombeo
     const result = await db.query(
-      `INSERT INTO planilla_bombeo 
+      `INSERT INTO planilla_bombeo
         (nombre_cliente, nombre_proyecto, fecha_servicio, bomba_numero, galones_inicio_acpm, galones_final_acpm, galones_pinpina, horometro_inicial, horometro_final, nombre_operador, nombre_auxiliar, total_metros_cubicos_bombeados)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING id`,
@@ -202,7 +201,7 @@ router.post("/", async (req, res) => {
         bomba_numero,
         galones_inicio_acpm,
         galones_final_acpm,
-        galones_pinpina, // <-- nuevo campo
+        galones_pinpina,
         horometro_inicial,
         horometro_final,
         nombre_operador,
@@ -212,7 +211,6 @@ router.post("/", async (req, res) => {
     );
     const planillaId = result.rows[0].id;
 
-    // 2. Insertar cada remisión asociada
     for (const rem of remisiones) {
       const {
         remision,
@@ -221,23 +219,19 @@ router.post("/", async (req, res) => {
         hora_final,
         metros,
         observaciones,
-        manguera // <-- nuevo campo
+        manguera
       } = rem;
 
-      // Formatear los campos TIME de la remisión
       const hora_llegada_fmt = formatTime(hora_llegada);
       const hora_inicial_fmt = formatTime(hora_inicial);
       const hora_final_fmt = formatTime(hora_final);
 
-      // Validar campos de la remisión
-      if (
-        !remision || !hora_llegada || !hora_inicial || !hora_final || metros == null || !manguera 
-      ) {
+      if (!remision || !hora_llegada || !hora_inicial || !hora_final || metros == null || !manguera) {
         return res.status(400).json({ error: "Faltan campos obligatorios en una remisión" });
       }
 
       await db.query(
-        `INSERT INTO remisiones 
+        `INSERT INTO remisiones
           (planilla_bombeo_id, remision, hora_llegada, hora_inicial, hora_final, metros, observaciones, manguera)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
@@ -253,26 +247,14 @@ router.post("/", async (req, res) => {
       );
     }
 
-    // Obtener la información completa de la planilla y sus remisiones
     const planilla = {
-      nombre_cliente,
-      nombre_proyecto,
-      fecha_servicio,
-      bomba_numero,
-      galones_inicio_acpm,
-      galones_final_acpm,
-      galones_pinpina,
-      horometro_inicial,
-      horometro_final,
-      nombre_operador,
-      nombre_auxiliar,
+      nombre_cliente, nombre_proyecto, fecha_servicio, bomba_numero,
+      galones_inicio_acpm, galones_final_acpm, galones_pinpina,
+      horometro_inicial, horometro_final, nombre_operador, nombre_auxiliar,
       total_metros_cubicos_bombeados,
     };
 
-    // Generar el PDF
     const pdfBuffer = await generarPDF(planilla, remisiones);
-
-    // Enviar el correo a los correos fijos
     await enviarCorreo(correosFijos, pdfBuffer);
 
     res.json({ message: "Registro guardado y correos enviados correctamente", planilla_bombeo_id: planillaId });
@@ -282,7 +264,11 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Endpoint para obtener todas las planillas de bombeo
+/**
+ * GET /bomberman/planillabombeo
+ * Retorna todos los registros de planilla de bombeo con sus remisiones asociadas anidadas por planilla.
+ * @returns {{ registros: Array<object & { remisiones: Array }> }}
+ */
 router.get("/", async (req, res) => {
   const db = global.db;
   if (!db) {
@@ -290,23 +276,17 @@ router.get("/", async (req, res) => {
     return res.status(500).json({ error: "DB no disponible" });
   }
   try {
-    // Obtener todas las planillas
     const result = await db.query(`SELECT * FROM planilla_bombeo`);
     const planillas = result.rows;
 
-    // Obtener todas las remisiones asociadas, incluyendo manguera
     const remisionesResult = await db.query(`SELECT * FROM remisiones`);
     const remisiones = remisionesResult.rows;
 
-    // Asociar remisiones a cada planilla
     const planillasConRemisiones = planillas.map(planilla => ({
       ...planilla,
       remisiones: remisiones
         .filter(r => r.planilla_bombeo_id === planilla.id)
-        .map(r => ({
-          ...r,
-          manguera: r.manguera // asegúrate que el campo esté presente
-        }))
+        .map(r => ({ ...r, manguera: r.manguera }))
     }));
 
     res.json({ registros: planillasConRemisiones });
@@ -315,7 +295,11 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Endpoint para exportar las planillas de bombeo a un archivo Excel
+/**
+ * GET /bomberman/planillabombeo/exportar
+ * Transmite todos los registros de planillas de bombeo y sus remisiones como un archivo XLSX.
+ * @returns {Buffer} Adjunto de libro Excel (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet)
+ */
 router.get("/exportar", async (req, res) => {
   const db = global.db;
   if (!db) {
@@ -324,11 +308,9 @@ router.get("/exportar", async (req, res) => {
   }
 
   try {
-    // Consulta los datos de planilla_bombeo
     const result = await db.query(`SELECT * FROM planilla_bombeo`);
     const planillas = result.rows;
 
-    // Consulta las remisiones asociadas
     const remisionesResult = await db.query(`SELECT * FROM remisiones`);
     const remisiones = remisionesResult.rows;
 

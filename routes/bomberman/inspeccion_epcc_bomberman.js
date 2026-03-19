@@ -8,12 +8,37 @@ router.use((req, res, next) => {
   next();
 });
 
-// POST: inserta registro
+/**
+ * Normaliza un valor a "SI" | "NO" | "NA".
+ * @param {*} val
+ * @returns {"SI"|"NO"|"NA"}
+ */
+function normalizeOption(val) {
+  if (val === undefined || val === null) return "NA";
+  if (typeof val === "string") {
+    const s = val.trim().toUpperCase();
+    if (["SI", "NO", "NA"].includes(s)) return s;
+    if (["S", "YES", "Y", "1"].includes(s)) return "SI";
+    if (["N", "NO", "0"].includes(s)) return "NO";
+    return "NA";
+  }
+  if (typeof val === "boolean") return val ? "SI" : "NO";
+  if (typeof val === "number") return val === 1 ? "SI" : (val === 0 ? "NO" : "NA");
+  return "NA";
+}
+
+/**
+ * POST /bomberman/inspeccion_epcc_bomberman
+ * Inserta un registro de inspección EPCC Bomberman que cubre condición personal, EPP,
+ * sistema anticaídas, arrestador y herramientas manuales/eléctricas.
+ * @body {{ nombre_cliente: string, nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, cargo: string, [field: string]: any }}
+ * @returns {{ message: string, id: number }}
+ * @throws {400} Si algún campo requerido está ausente.
+ */
 router.post("/", async (req, res) => {
   const db = global.db;
   const body = req.body || {};
 
-  // Campos obligatorios (nombres actualizados)
   const required = [
     "nombre_cliente", "nombre_proyecto", "fecha_servicio", "nombre_operador", "cargo",
     "sintoma_malestar_fisico", "uso_medicamentos_que_afecten_alerta", "consumo_sustancias_12h", "condiciones_fisicas_tareas_criticas",
@@ -32,24 +57,16 @@ router.post("/", async (req, res) => {
     "piezas_ajustadas_correctamente", "tubo_escape_con_guarda_silenciador", "guayas_pasadores_buen_estado",
     "observaciones_generales"
   ];
+
   const faltantes = required.filter(k => body[k] === undefined || body[k] === null);
   if (faltantes.length) return res.status(400).json({ error: "Faltan campos requeridos", faltantes });
 
-  // Normalización de campos tipo opción (SI/NO/NA)
-  const optionFields = new Set(required.filter(k => k !== "nombre_cliente" && k !== "nombre_proyecto" && k !== "fecha_servicio" && k !== "nombre_operador" && k !== "cargo" && k !== "observaciones_generales"));
-  function normalizeOption(val) {
-    if (val === undefined || val === null) return "NA";
-    if (typeof val === "string") {
-      const s = val.trim().toUpperCase();
-      if (["SI", "NO", "NA"].includes(s)) return s;
-      if (["S", "YES", "Y", "1"].includes(s)) return "SI";
-      if (["N", "NO", "0"].includes(s)) return "NO";
-      return "NA";
-    }
-    if (typeof val === "boolean") return val ? "SI" : "NO";
-    if (typeof val === "number") return val === 1 ? "SI" : (val === 0 ? "NO" : "NA");
-    return "NA";
-  }
+  const optionFields = new Set(required.filter(k =>
+    k !== "nombre_cliente" && k !== "nombre_proyecto" &&
+    k !== "fecha_servicio" && k !== "nombre_operador" &&
+    k !== "cargo" && k !== "observaciones_generales"
+  ));
+
   required.forEach(f => {
     if (optionFields.has(f) && body[f] !== undefined) {
       body[f] = normalizeOption(body[f]);
@@ -70,7 +87,12 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET: lista los registros (últimos 200 por defecto)
+/**
+ * GET /bomberman/inspeccion_epcc_bomberman
+ * Retorna los registros de inspección EPCC Bomberman más recientes.
+ * @query {number} [limit=200]
+ * @returns {{ registros: Array }}
+ */
 router.get("/", async (req, res) => {
   const db = global.db;
   try {

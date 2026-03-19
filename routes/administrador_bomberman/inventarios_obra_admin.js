@@ -10,7 +10,13 @@ import { buildWhere } from '../../helpers/queryBuilder.js';
 dotenv.config();
 const router = express.Router();
 
-// GET /inventarios_obra/search -> búsqueda por query params (opcional)
+/**
+ * GET /inventarios_obra/search
+ * Búsqueda flexible por query string en registros de inventario de obra.
+ * Asigna automáticamente `fecha_to` a hoy cuando `fecha_from` se proporciona sin fecha de fin.
+ * @query {{ nombre_cliente?, nombre_proyecto?, fecha?, fecha_from?, fecha_to?, nombre_operador?, cargo?, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array }}
+ */
 router.get('/inventarios_obra/search', async (req, res) => {
   try {
     const pool = global.db;
@@ -28,7 +34,13 @@ router.get('/inventarios_obra/search', async (req, res) => {
   }
 });
 
-// POST /buscar -> filtros en body JSON
+/**
+ * POST /buscar
+ * Busca registros de inventario de obra usando filtros del body.
+ * Retorna una estructura normalizada con una propiedad `raw` que contiene la fila original de la BD.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, limit?: number, offset?: number }}
+ * @returns {{ success: boolean, count: number, rows: Array<{ fecha: string, nombre: string, cedula: string|null, empresa: string, obra: string, constructora: string, raw: object }> }}
+ */
 router.post('/buscar', async (req, res) => {
   try {
     const pool = global.db;
@@ -72,8 +84,13 @@ router.post('/buscar', async (req, res) => {
   }
 });
 
-
-// Genera un Excel llenando el template con los datos de un registro
+/**
+ * Llena una plantilla XLSX con datos de un único registro de inventario_obra.
+ * Reemplaza los marcadores `{{campo}}` en todas las celdas (texto plano y richText).
+ * @param {object} r - Fila de BD de inventario_obra.
+ * @returns {Promise<Buffer>} Buffer XLSX relleno.
+ * @throws {Error} Cuando no se encuentra el archivo de plantilla en ninguna ruta candidata.
+ */
 async function generarExcelPorInventarioObra(r) {
   const candidatePaths = [
     path.join(process.cwd(), 'templates', 'inventario_obras_admin_template.xlsx'),
@@ -88,8 +105,8 @@ async function generarExcelPorInventarioObra(r) {
 
   const data = {};
   Object.keys(r).forEach(k => {
-  let v = r[k];
-  if (k === 'fecha_servicio') v = v ? formatDateOnly(v) : '';
+    let v = r[k];
+    if (k === 'fecha_servicio') v = v ? formatDateOnly(v) : '';
     else if (v === null || v === undefined) v = '';
     else if (typeof v === 'object') { try { v = JSON.stringify(v); } catch(e){ v = String(v); } }
     data[k] = String(v);
@@ -112,7 +129,12 @@ async function generarExcelPorInventarioObra(r) {
   return buf;
 }
 
-// Genera un PDF a partir del Excel llenado
+/**
+ * Genera un buffer PDF a partir de la plantilla XLSX rellena convirtiéndola mediante LibreOffice.
+ * @param {object} r - Fila de BD de inventario_obra.
+ * @returns {Promise<Buffer>}
+ * @throws {Error} Cuando LibreOffice no está instalado en la ruta resuelta.
+ */
 async function generarPDFPorInventarioObra(r) {
   const xlsxBuf = await generarExcelPorInventarioObra(r);
   const sofficePath = process.env.LIBREOFFICE_PATH || "/Applications/LibreOffice.app/Contents/MacOS/soffice";
@@ -128,15 +150,21 @@ async function generarPDFPorInventarioObra(r) {
   return pdfBuf;
 }
 
-// POST /descargar -> genera XLSX o ZIP de PDFs
+/**
+ * POST /descargar
+ * Exporta registros filtrados de inventario de obra en el formato solicitado.
+ * - `excel`: un único XLSX cuando hay un solo resultado; ZIP de archivos XLSX por registro para múltiples.
+ * - `pdf`: un único PDF cuando hay un solo resultado; ZIP de PDFs por registro para múltiples.
+ * - Por defecto: CSV con todas las columnas.
+ * @body {{ nombre?: string, cedula?: string, obra?: string, constructora?: string, fecha_inicio?: string, fecha_fin?: string, formato?: 'excel'|'pdf'|'csv', limit?: number }}
+ * @returns {Buffer} Adjunto en el formato solicitado.
+ */
 router.post('/descargar', async (req, res) => {
   try {
     const pool = global.db;
     const { nombre, cedula, obra, constructora, fecha_inicio, fecha_fin, formato = 'excel', limit = 10000 } = req.body || {};
     const startDate = formatDateOnly(fecha_inicio);
     const endDate = formatDateOnly(fecha_fin) || todayDateString();
-
-    console.log(`[DESCARGAR] Formato solicitado: ${formato}`);
 
     const clauses = [];
     const values = [];
@@ -151,54 +179,38 @@ router.post('/descargar', async (req, res) => {
     const q = await pool.query(`SELECT * FROM inventario_obra ${where} ORDER BY id DESC LIMIT $${idx}`, [...values, Math.min(50000, parseInt(limit) || 10000)]);
     const rows = (q.rows || []);
 
-    console.log(`[DESCARGAR] Registros encontrados: ${rows.length}`);
-
     if (formato === 'excel') {
       if (!rows.length) {
         const workbook = new ExcelJS.Workbook();
-        const ws = workbook.addWorksheet('Inventario Obra');
+        workbook.addWorksheet('Inventario Obra');
         res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition','attachment; filename="inventarios_obra.xlsx"');
         await workbook.xlsx.write(res);
         return res.end();
       }
-      
+
       if (rows.length === 1) {
-        console.log(`[DESCARGAR] Generando Excel para registro ID: ${rows[0].id}`);
         const xlsxBuf = await generarExcelPorInventarioObra(rows[0]);
-        
-        console.log(`[DESCARGAR] Buffer generado, tamaño: ${xlsxBuf.length} bytes`);
-        
-        // NO usar res.setHeader después de comenzar a escribir
         res.writeHead(200, {
           'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           'Content-Disposition': `attachment; filename="inventario_obra_${rows[0].id}.xlsx"`,
           'Content-Length': xlsxBuf.length
         });
-        
         res.write(xlsxBuf);
         res.end();
-        
-        console.log(`[DESCARGAR] Archivo enviado exitosamente`);
         return;
       }
-      
-      // Varios registros: ZIP con un Excel por registro
-      console.log(`[DESCARGAR] Generando ZIP con ${rows.length} archivos Excel`);
+
       res.writeHead(200, {
         'Content-Type': 'application/zip',
         'Content-Disposition': 'attachment; filename="inventarios_obra_excels.zip"'
       });
-      
       const archive = archiver('zip', { zlib: { level: 9 } });
-      archive.on('error', err => { 
-        console.error('Archiver error:', err); 
-        try{ 
-          if (!res.headersSent) res.status(500).end(); 
-        } catch(e){} 
+      archive.on('error', err => {
+        console.error('Archiver error:', err);
+        try{ if (!res.headersSent) res.status(500).end(); } catch(e){}
       });
       archive.pipe(res);
-      
       for (const r of rows) {
         try {
           const xlsxBuf = await generarExcelPorInventarioObra(r);
@@ -208,50 +220,35 @@ router.post('/descargar', async (req, res) => {
           archive.append(`Error generando Excel para id=${r.id}: ${err.message||err}`, { name: `inventario_obra_${r.id}_error.txt` });
         }
       }
-      
       await archive.finalize();
-      console.log(`[DESCARGAR] ZIP generado y enviado exitosamente`);
       return;
     }
 
     if (formato === 'pdf') {
       if (!rows.length) return res.status(404).json({ success: false, error: 'No se encontraron registros' });
-      
+
       if (rows.length === 1) {
-        console.log(`[DESCARGAR] Generando PDF para registro ID: ${rows[0].id}`);
         const pdfBuf = await generarPDFPorInventarioObra(rows[0]);
-        
-        console.log(`[DESCARGAR] PDF generado, tamaño: ${pdfBuf.length} bytes`);
-        
         res.writeHead(200, {
           'Content-Type': 'application/pdf',
           'Content-Disposition': `attachment; filename="inventario_obra_${rows[0].id}.pdf"`,
           'Content-Length': pdfBuf.length
         });
-        
         res.write(pdfBuf);
         res.end();
-        
-        console.log(`[DESCARGAR] PDF enviado exitosamente`);
         return;
       }
-      
-      // Varios registros: ZIP con un PDF por registro
-      console.log(`[DESCARGAR] Generando ZIP con ${rows.length} archivos PDF`);
+
       res.writeHead(200, {
         'Content-Type': 'application/zip',
         'Content-Disposition': 'attachment; filename="inventarios_obra_pdfs.zip"'
       });
-      
       const archive = archiver('zip', { zlib: { level: 9 } });
-      archive.on('error', err => { 
-        console.error('Archiver error:', err); 
-        try{ 
-          if (!res.headersSent) res.status(500).end(); 
-        } catch(e){} 
+      archive.on('error', err => {
+        console.error('Archiver error:', err);
+        try{ if (!res.headersSent) res.status(500).end(); } catch(e){}
       });
       archive.pipe(res);
-      
       for (const r of rows) {
         try {
           const pdfBuf = await generarPDFPorInventarioObra(r);
@@ -261,13 +258,11 @@ router.post('/descargar', async (req, res) => {
           archive.append(`Error generando PDF para id=${r.id}: ${err.message||err}`, { name: `inventario_obra_${r.id}_error.txt` });
         }
       }
-      
       await archive.finalize();
-      console.log(`[DESCARGAR] ZIP de PDFs generado y enviado exitosamente`);
       return;
     }
 
-    // fallback CSV
+    // CSV fallback
     const keys = rows[0] ? Object.keys(rows[0]) : [];
     const header = keys.length ? keys : ['id','fecha','operador','obra','cliente'];
     const lines = [header.join(',')];
@@ -275,15 +270,11 @@ router.post('/descargar', async (req, res) => {
       const rowArr = header.map(k => {
         let val = r[k];
         if (k === 'fecha_servicio') {
-          try {
-            val = val ? formatDateOnly(val) : '';
-          } catch (e) { val = val ? String(val) : ''; }
+          try { val = val ? formatDateOnly(val) : ''; } catch (e) { val = val ? String(val) : ''; }
         } else if (val === null || val === undefined) {
           val = '';
         } else if (val instanceof Date) {
-          try {
-            val = formatDateOnly(val) || '';
-          } catch (e) { val = ''; }
+          try { val = formatDateOnly(val) || ''; } catch (e) { val = ''; }
         } else if (Buffer.isBuffer(val)) {
           val = '[Buffer]';
         } else if (typeof val === 'object') {
