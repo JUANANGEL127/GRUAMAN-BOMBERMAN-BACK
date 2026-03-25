@@ -837,7 +837,7 @@ app.post("/validar_ubicacion", async (req, res) => {
     if (distancia <= 500) {
       res.json({ ok: true });
     } else {
-      res.status(403).json({ ok: false, message: "No estás en la ubicación de la obra seleccionada" });
+      res.status(403).json({ ok: false, distancia: Math.round(distancia), message: "No estás en la ubicación de la obra seleccionada" });
     }
   } catch (error) {
     res.status(500).json({ ok: false, message: "Error al validar ubicación" });
