@@ -37,8 +37,10 @@ import adminObrasRouter from "./routes/administrador/admin_obras.js";
 import webauthnRouter from './routes/webauthn.js';
 import signioRouter from './routes/signio.js';
 import registrosDiariosRouter from './routes/administrador/registros_diarios.js';
+import indicadorCentralRouter from './routes/administrador/indicador_central.js';
 import authPinRouter from './routes/auth_pin.js';
 import pqrRouter from './routes/sst/pqr.js';
+import { getIndicadorCentralDefaultConfig, runIndicadorCentralCutoff } from './helpers/indicador_central.js';
 
 import dotenv from "dotenv";
 if (process.env.NODE_ENV === "production") {
@@ -102,6 +104,8 @@ app.use('/webauthn', webauthnRouter);
 app.use('/signio', signioRouter);
 app.use('/auth/pin', authPinRouter);
 app.use('/api', registrosDiariosRouter);
+app.use('/administrador/registros_diarios', registrosDiariosRouter);
+app.use('/administrador/indicador_central', indicadorCentralRouter);
 
 const pool = process.env.DATABASE_URL
   ? new Pool({
@@ -152,6 +156,8 @@ global.db = pool;
 
   await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS pin_habilitado BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
   await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS pin_hash VARCHAR(100)`).catch(() => {});
+  await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT true`).catch(() => {});
+  await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS cargo VARCHAR(100)`).catch(() => {});
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS horas_jornada (
@@ -478,6 +484,101 @@ global.db = pool;
   `);
 
   await pool.query(`DELETE FROM cron_locks WHERE created_at < NOW() - INTERVAL '1 day'`).catch(() => {});
+
+  await pool.query(`ALTER TABLE obras ADD COLUMN IF NOT EXISTS empresa_id INT REFERENCES empresas(id)`).catch(() => {});
+  await pool.query(`ALTER TABLE obras ADD COLUMN IF NOT EXISTS constructora VARCHAR(150) NOT NULL DEFAULT ''`).catch(() => {});
+  await pool.query(`ALTER TABLE obras ADD COLUMN IF NOT EXISTS activa BOOLEAN NOT NULL DEFAULT true`).catch(() => {});
+  await pool.query(`ALTER TABLE obras ADD COLUMN IF NOT EXISTS departamento_id INT`).catch(() => {});
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS indicador_central_config_versions (
+      id SERIAL PRIMARY KEY,
+      version INTEGER NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT false,
+      destinatarios JSONB NOT NULL DEFAULT '[]'::jsonb,
+      umbrales JSONB NOT NULL DEFAULT '{}'::jsonb,
+      formatos_por_empresa JSONB NOT NULL DEFAULT '{}'::jsonb,
+      exclusiones JSONB NOT NULL DEFAULT '[]'::jsonb,
+      distribucion_habilitada BOOLEAN NOT NULL DEFAULT false,
+      scope JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_by VARCHAR(100) NOT NULL DEFAULT 'system',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS indicador_central_ejecuciones (
+      id SERIAL PRIMARY KEY,
+      corte_tipo VARCHAR(20) NOT NULL,
+      corte_fecha DATE NOT NULL,
+      canal VARCHAR(30) NOT NULL DEFAULT 'email',
+      estado VARCHAR(20) NOT NULL,
+      origen VARCHAR(20) NOT NULL,
+      config_version_id INT REFERENCES indicador_central_config_versions(id),
+      snapshot_batch_id VARCHAR(100),
+      destinatarios JSONB NOT NULL DEFAULT '[]'::jsonb,
+      resumen JSONB NOT NULL DEFAULT '{}'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      error_message TEXT,
+      started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      finished_at TIMESTAMP
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS indicador_central_dataset_snapshot (
+      id SERIAL PRIMARY KEY,
+      batch_id VARCHAR(100) NOT NULL,
+      execution_id INT REFERENCES indicador_central_ejecuciones(id) ON DELETE SET NULL,
+      corte_tipo VARCHAR(20) NOT NULL,
+      corte_fecha DATE NOT NULL,
+      fecha_registro DATE NOT NULL,
+      empresa_id INT,
+      empresa VARCHAR(100),
+      nombre_operador VARCHAR(150) NOT NULL,
+      nombre_proyecto VARCHAR(150),
+      obra_id INT,
+      obra_nombre VARCHAR(150),
+      actividad_registrada BOOLEAN NOT NULL DEFAULT false,
+      cumplimiento_pct NUMERIC(5,2) NOT NULL DEFAULT 0,
+      total_registros INT NOT NULL DEFAULT 0,
+      formatos_llenos JSONB NOT NULL DEFAULT '[]'::jsonb,
+      formatos_faltantes JSONB NOT NULL DEFAULT '[]'::jsonb,
+      anomalias JSONB NOT NULL DEFAULT '[]'::jsonb,
+      raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_indicador_central_snapshot_batch ON indicador_central_dataset_snapshot (batch_id)`).catch(() => {});
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_indicador_central_snapshot_corte ON indicador_central_dataset_snapshot (corte_fecha)`).catch(() => {});
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_indicador_central_success ON indicador_central_ejecuciones (corte_tipo, corte_fecha, canal) WHERE estado = 'success'`).catch(() => {});
+
+  const indicadorConfigCount = await pool.query(`SELECT COUNT(*)::int AS total FROM indicador_central_config_versions`);
+  if (Number(indicadorConfigCount.rows[0]?.total || 0) === 0) {
+    const defaultConfig = getIndicadorCentralDefaultConfig();
+    await pool.query(
+      `INSERT INTO indicador_central_config_versions (
+        version,
+        is_active,
+        destinatarios,
+        umbrales,
+        formatos_por_empresa,
+        exclusiones,
+        distribucion_habilitada,
+        scope,
+        updated_by
+      ) VALUES (1, true, $1::jsonb, $2::jsonb, $3::jsonb, $4::jsonb, $5, $6::jsonb, 'bootstrap')`,
+      [
+        JSON.stringify(defaultConfig.destinatarios || []),
+        JSON.stringify(defaultConfig.umbrales || {}),
+        JSON.stringify(defaultConfig.formatos_por_empresa || {}),
+        JSON.stringify(defaultConfig.exclusiones || []),
+        defaultConfig.distribucion_habilitada === true,
+        JSON.stringify(defaultConfig.scope || {})
+      ]
+    );
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS pqr (
@@ -1080,6 +1181,20 @@ async function ejecutarConLock(nombreTarea, callback) {
   }
 }
 
+cron.schedule('0 0 * * *', async () => {
+  await ejecutarConLock('indicador_central_diario_0000', async () => {
+    try {
+      await runIndicadorCentralCutoff({
+        corteTipo: 'diario',
+        origen: 'cron',
+        canal: 'email',
+        db: pool
+      });
+    } catch (err) {
+      console.error('Error ejecutando indicador central diario:', err.message);
+    }
+  });
+}, { timezone: CRON_TIMEZONE });
 cron.schedule('30 6 * * *', async () => {
   await ejecutarConLock('buenos_dias_630', async () => {
     const result = await pool.query(`
@@ -1261,3 +1376,4 @@ cron.schedule('0 16 * * *', async () => {
 app.get('/vapid-public-key', (req, res) => {
   res.type('text/plain').send(process.env.VAPID_PUBLIC_KEY);
 });
+
