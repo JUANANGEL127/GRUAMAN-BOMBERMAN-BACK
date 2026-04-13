@@ -1,6 +1,8 @@
 import ExcelJS from 'exceljs';
+import { renderComparativoIngresoChart } from './indicador_central_excel_chart.js';
 
 const AUSENCIAS_SHEET_NAME = 'Ausencias - No ingreso';
+const COMPARATIVO_INGRESO_SHEET_NAME = 'Comparativo ingreso';
 
 function roundPercentage(value) {
   return Math.round(Number(value || 0) * 100) / 100;
@@ -362,6 +364,105 @@ function addDesempenoSheet(workbook, rows) {
   applyHeaderStyle(desempenoSheet);
 }
 
+function styleSectionTitle(cell) {
+  cell.font = { bold: true, size: 12, color: { argb: 'FF102A43' } };
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAF2FF' } };
+  cell.alignment = { vertical: 'middle', horizontal: 'left' };
+  cell.border = {
+    top: { style: 'thin', color: { argb: 'FFD9E2EC' } },
+    left: { style: 'thin', color: { argb: 'FFD9E2EC' } },
+    bottom: { style: 'thin', color: { argb: 'FFD9E2EC' } },
+    right: { style: 'thin', color: { argb: 'FFD9E2EC' } }
+  };
+}
+
+function setKeyValueRow(worksheet, rowNumber, key, value, {
+  keyColumn = 'B',
+  valueColumn = 'C'
+} = {}) {
+  worksheet.getCell(`${keyColumn}${rowNumber}`).value = key;
+  worksheet.getCell(`${valueColumn}${rowNumber}`).value = value;
+  worksheet.getCell(`${keyColumn}${rowNumber}`).font = { bold: true, color: { argb: 'FF243B53' } };
+  worksheet.getCell(`${valueColumn}${rowNumber}`).font = { color: { argb: 'FF243B53' } };
+}
+
+async function addComparativoIngresoSheet(workbook, {
+  resumen,
+  corteTipo,
+  fechaCorte,
+  fechaDesde,
+  fechaHasta
+}) {
+  const comparativoSheet = workbook.addWorksheet(COMPARATIVO_INGRESO_SHEET_NAME);
+  comparativoSheet.properties.defaultRowHeight = 22;
+  comparativoSheet.columns = [
+    { width: 4 },
+    { width: 28 },
+    { width: 22 },
+    { width: 22 },
+    { width: 22 },
+    { width: 22 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 }
+  ];
+
+  comparativoSheet.mergeCells('B2:H2');
+  comparativoSheet.getCell('B2').value = 'Comparativo ingreso';
+  comparativoSheet.getCell('B2').font = { bold: true, size: 18, color: { argb: 'FF102A43' } };
+
+  comparativoSheet.mergeCells('B3:H3');
+  comparativoSheet.getCell('B3').value = corteTipo === 'mensual'
+    ? 'La visual principal usa resumen mensual por persona única; el detalle persona-día queda como contexto.'
+    : 'La visual principal usa el resumen diario consolidado del workbook.';
+  comparativoSheet.getCell('B3').font = { italic: true, color: { argb: 'FF486581' } };
+
+  styleSectionTitle(comparativoSheet.getCell('B5'));
+  comparativoSheet.getCell('B5').value = 'Metadatos del corte';
+  setKeyValueRow(comparativoSheet, 6, 'Tipo de corte', corteTipo);
+  setKeyValueRow(comparativoSheet, 7, 'Fecha de corte', fechaCorte || '');
+  setKeyValueRow(comparativoSheet, 8, 'Período consultado', fechaDesde && fechaHasta
+    ? fechaDesde === fechaHasta
+      ? fechaDesde
+      : `${fechaDesde} a ${fechaHasta}`
+    : fechaCorte || ''
+  );
+  setKeyValueRow(comparativoSheet, 9, 'Granularidad principal', resumen.granularidad_resumen ?? 'persona_dia');
+
+  styleSectionTitle(comparativoSheet.getCell('F5'));
+  comparativoSheet.getCell('F5').value = 'Base visual';
+  setKeyValueRow(comparativoSheet, 6, 'Con ingreso', Number(resumen.operarios_con_actividad ?? 0), { keyColumn: 'F', valueColumn: 'G' });
+  setKeyValueRow(comparativoSheet, 7, 'Sin ingreso', Number(resumen.operarios_sin_actividad ?? 0), { keyColumn: 'F', valueColumn: 'G' });
+  setKeyValueRow(comparativoSheet, 8, 'Total evaluado', Number(resumen.total_operarios ?? 0), { keyColumn: 'F', valueColumn: 'G' });
+  setKeyValueRow(comparativoSheet, 9, 'Promedio cumplimiento %', Number(resumen.promedio_cumplimiento_pct ?? 0), { keyColumn: 'F', valueColumn: 'G' });
+
+  if (corteTipo === 'mensual' && resumen.metricas_persona_dia) {
+    styleSectionTitle(comparativoSheet.getCell('B27'));
+    comparativoSheet.getCell('B27').value = 'Contexto mensual (persona-día)';
+    setKeyValueRow(comparativoSheet, 28, 'Detalle auditado', Number(resumen.metricas_persona_dia.total_operarios ?? 0));
+    setKeyValueRow(comparativoSheet, 29, 'Días con ingreso', Number(resumen.metricas_persona_dia.operarios_con_actividad ?? 0));
+    setKeyValueRow(comparativoSheet, 30, 'Días sin ingreso', Number(resumen.metricas_persona_dia.operarios_sin_actividad ?? 0));
+    setKeyValueRow(comparativoSheet, 31, 'Días con duplicados', Number(resumen.metricas_persona_dia.duplicados_detectados ?? 0));
+    comparativoSheet.mergeCells('B33:H33');
+    comparativoSheet.getCell('B33').value = 'Nota: este bloque es solo contexto/auditoría. La barra principal no usa persona-día como base del comparativo mensual.';
+    comparativoSheet.getCell('B33').font = { italic: true, color: { argb: 'FF486581' } };
+  }
+
+  const imageBuffer = await renderComparativoIngresoChart({ resumen, corteTipo });
+  const imageId = workbook.addImage({
+    buffer: imageBuffer,
+    extension: 'png'
+  });
+
+  comparativoSheet.addImage(imageId, {
+    tl: { col: 1.2, row: 10.2 },
+    ext: { width: 960, height: 336 }
+  });
+}
+
 async function generateWorkbookBuffer({
   rows,
   resumen = {},
@@ -389,6 +490,13 @@ async function generateWorkbookBuffer({
     configuracion,
     workbookDatasets: datasets
   });
+  await addComparativoIngresoSheet(workbook, {
+    resumen: datasets.resumen || resumenResolved,
+    corteTipo,
+    fechaCorte,
+    fechaDesde,
+    fechaHasta
+  });
   addDetalleSheet(workbook, datasets.detalle || rows || []);
   addAusenciasSheet(workbook, datasets.ausencias_no_ingreso || []);
   addDesempenoSheet(workbook, datasets.desempeno_por_persona || []);
@@ -399,6 +507,8 @@ async function generateWorkbookBuffer({
 
 /**
  * Crea un workbook ejecutivo del indicador central y lo retorna como Buffer.
+ * Incluye las hojas Resumen, Comparativo ingreso, Detalle,
+ * Ausencias - No ingreso y Desempeño por persona.
  * @param {{ rows: Array<object>, resumen: object, corteTipo: string, fechaCorte: string, fechaDesde?: string, fechaHasta?: string, configuracion?: object, workbookDatasets?: object }} params
  * @returns {Promise<Buffer>}
  */
@@ -408,6 +518,7 @@ export async function generateIndicadorCentralWorkbookBuffer(params) {
 
 /**
  * Crea el workbook compatible con el export manual de registros diarios.
+ * Mantiene la misma composición ejecutiva del workbook del indicador central.
  * @param {{ rows: Array<object>, resumen?: object, corteTipo?: string, fechaCorte?: string, fechaDesde?: string, fechaHasta?: string, configuracion?: object, workbookDatasets?: object }} params
  * @returns {Promise<Buffer>}
  */

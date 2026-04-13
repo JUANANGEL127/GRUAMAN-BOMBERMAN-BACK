@@ -137,9 +137,10 @@ Ese `metricas_persona_dia` conserva el detalle auditado mensual sin perder traza
 
 ## 4. Workbook / informe XLSX actual
 
-El workbook actual ya separa ingreso y cumplimiento y ahora expone cuatro pestañas coherentes entre sí:
+El workbook actual ya separa ingreso y cumplimiento y ahora expone cinco pestañas coherentes entre sí:
 
 - `Resumen`
+- `Comparativo ingreso`
 - `Detalle`
 - `Ausencias - No ingreso`
 - `Desempeño por persona`
@@ -166,6 +167,18 @@ El detalle expone:
 - `Formatos Operativos Llenos`
 - `Formatos Operativos Faltantes`
 - `Formatos Faltantes Totales`
+
+### Comparativo ingreso
+
+Nueva pestaña ejecutiva orientada a lectura rápida.
+
+Semántica implementada:
+
+- la visual principal es una **barra apilada 100% horizontal** embebida como PNG;
+- la base principal del chart es siempre `workbookDatasets.resumen`;
+- en corte `mensual`, la barra usa el resumen por `persona_unica_mensual`;
+- `metricas_persona_dia` se muestra solo como **contexto/auditoría**, nunca como base principal del chart;
+- la pestaña además expone metadatos del corte y los valores absolutos usados para renderizar la visual.
 
 ### Ausencias - No ingreso
 
@@ -281,6 +294,7 @@ El helper de Excel quedó alineado con el dataset derivado del backend y ya no d
 ### 7.2 Tabs implementadas
 
 - `Resumen`: métricas del corte, período consultado y conteos de tabs derivadas.
+- `Comparativo ingreso`: visual ejecutiva con barra apilada 100% horizontal basada en `workbookDatasets.resumen`.
 - `Detalle`: base persona-día auditable.
 - `Ausencias - No ingreso`: todos los persona-día sin `horas_jornada`.
 - `Desempeño por persona`: consolidado por persona para el período seleccionado.
