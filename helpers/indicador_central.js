@@ -2,6 +2,7 @@
 import { DateTime } from 'luxon';
 import { formatDateOnly, parseDateLocal, todayDateString } from './dateUtils.js';
 import { generateIndicadorCentralWorkbookBuffer } from './indicador_central_excel.js';
+import { renderComparativoIngresoChart } from './indicador_central_excel_chart.js';
 
 export const INDICADOR_CENTRAL_TIMEZONE = 'America/Bogota';
 
@@ -155,6 +156,10 @@ export function resolveFechaCorteDiario(now = DateTime.now().setZone(INDICADOR_C
   return now.startOf('day').minus({ days: 1 }).toISODate();
 }
 
+function isMonthlyUniqueCutoff(corteTipo = 'diario') {
+  return corteTipo === 'mensual' || corteTipo === 'mensual_acumulado';
+}
+
 function resolveRangeForCutoff({ corteTipo = 'diario', fechaCorte }) {
   const normalized = formatDateOnly(fechaCorte);
   if (corteTipo === 'mensual') {
@@ -164,6 +169,16 @@ function resolveRangeForCutoff({ corteTipo = 'diario', fechaCorte }) {
     const end = DateTime.fromISO(normalized, { zone: INDICADOR_CENTRAL_TIMEZONE }).endOf('month').toISODate();
     const start = DateTime.fromISO(normalized, { zone: INDICADOR_CENTRAL_TIMEZONE }).startOf('month').toISODate();
     return { fechaDesde: start, fechaHasta: end, fechaCorte: end };
+  }
+
+  if (corteTipo === 'mensual_acumulado') {
+    const fechaEfectiva = normalized || resolveFechaCorteDiario();
+    const start = DateTime.fromISO(fechaEfectiva, { zone: INDICADOR_CENTRAL_TIMEZONE }).startOf('month').toISODate();
+    return {
+      fechaDesde: start,
+      fechaHasta: fechaEfectiva,
+      fechaCorte: fechaEfectiva
+    };
   }
 
   const finalFechaCorte = normalized || resolveFechaCorteDiario();
@@ -419,11 +434,44 @@ function summarizeIndicadorRowsMonthly(rows) {
 }
 
 function summarizeIndicadorRows(rows, { corteTipo = 'diario' } = {}) {
-  if (corteTipo === 'mensual') {
+  if (isMonthlyUniqueCutoff(corteTipo)) {
     return summarizeIndicadorRowsMonthly(rows);
   }
 
   return summarizeIndicadorRowsByPersonaDia(rows);
+}
+
+function buildComparativoIngresoVisual(rows, { corteTipo = 'diario' } = {}) {
+  const isMonthly = isMonthlyUniqueCutoff(corteTipo);
+  const comparativos = [
+    { key: 'total', label: 'Total', empresa_id: null, rows },
+    { key: 'grua_man', label: 'Grua Man', empresa_id: 1, rows: rows.filter((row) => Number(row.empresa_id) === 1) },
+    { key: 'bomberman', label: 'Bomberman', empresa_id: 2, rows: rows.filter((row) => Number(row.empresa_id) === 2) }
+  ].map((segment) => {
+    const resumen = summarizeIndicadorRows(segment.rows, { corteTipo });
+    return {
+      key: segment.key,
+      label: segment.label,
+      empresa_id: segment.empresa_id,
+      total: Number(resumen.total_operarios ?? 0),
+      conIngreso: Number(resumen.operarios_con_actividad ?? 0),
+      sinIngreso: Number(resumen.operarios_sin_actividad ?? 0),
+      duplicados: Number(resumen.duplicados_detectados ?? 0),
+      promedio_cumplimiento_pct: Number(resumen.promedio_cumplimiento_pct ?? 0),
+      granularidad: resumen.granularidad_resumen ?? (isMonthly ? 'persona_unica_mensual' : 'persona_dia'),
+      resumen
+    };
+  });
+
+  return {
+    title: 'Comparativo ingreso',
+    subtitle: isMonthly
+      ? 'Base principal: resumen mensual por persona unica dentro del scope activo. Persona-dia queda como contexto.'
+      : 'Base principal: resumen diario persona-dia dentro del scope activo.',
+    source_label: 'workbookDatasets.comparativo_ingreso_visual',
+    granularidad_resumen: isMonthly ? 'persona_unica_mensual' : 'persona_dia',
+    comparativos
+  };
 }
 
 function buildAusenciasNoIngresoRows(rows) {
@@ -544,6 +592,7 @@ function buildDesempenoPorPersonaRows(rows) {
 export function buildIndicadorCentralWorkbookDatasets(rows, { corteTipo = 'diario' } = {}) {
   return {
     resumen: summarizeIndicadorRows(rows, { corteTipo }),
+    comparativo_ingreso_visual: buildComparativoIngresoVisual(rows, { corteTipo }),
     detalle: [...rows],
     ausencias_no_ingreso: buildAusenciasNoIngresoRows(rows),
     desempeno_por_persona: buildDesempenoPorPersonaRows(rows)
@@ -769,13 +818,28 @@ export async function buildIndicadorCentralDataset({
   };
 }
 
-function buildEmailHtml({ fechaCorte, corteTipo, resumen }) {
-  const labels = corteTipo === 'mensual'
+function buildEmailComparativoBlocks(comparativoVisual = {}) {
+  const comparativos = Array.isArray(comparativoVisual.comparativos) ? comparativoVisual.comparativos : [];
+  if (comparativos.length === 0) return '';
+
+  return comparativos.map((item) => `
+      <div style="margin: 0 0 12px; padding: 12px 14px; border: 1px solid #D9E2EC; border-radius: 10px; background: #F8FAFC;">
+        <div style="font-weight: 700; color: #102A43; margin-bottom: 6px;">${item.label}</div>
+        <div style="color: #243B53;">Total evaluado: ${item.total ?? 0}</div>
+        <div style="color: #243B53;">Con ingreso: ${item.conIngreso ?? 0}</div>
+        <div style="color: #243B53;">Sin ingreso: ${item.sinIngreso ?? 0}</div>
+      </div>
+    `).join('');
+}
+
+function buildEmailHtml({ fechaCorte, corteTipo, resumen, comparativoVisual, chartCid = null }) {
+  const useUniqueLabels = isMonthlyUniqueCutoff(corteTipo);
+  const labels = useUniqueLabels
     ? {
-      total: 'Operarios únicos evaluados',
-      conActividad: 'Operarios únicos con ingreso',
-      sinActividad: 'Operarios únicos sin ingreso',
-      duplicados: 'Operarios únicos con duplicados',
+      total: 'Operarios unicos evaluados',
+      conActividad: 'Operarios unicos con ingreso',
+      sinActividad: 'Operarios unicos sin ingreso',
+      duplicados: 'Operarios unicos con duplicados',
     }
     : {
       total: 'Operarios evaluados',
@@ -783,12 +847,20 @@ function buildEmailHtml({ fechaCorte, corteTipo, resumen }) {
       sinActividad: 'Sin ingreso',
       duplicados: 'Duplicados detectados',
     };
-  const detallePersonaDia = corteTipo === 'mensual' && resumen.metricas_persona_dia
+  const detallePersonaDia = useUniqueLabels && resumen.metricas_persona_dia
     ? `
-      <li><strong>Detalle auditado (persona-día):</strong> ${resumen.metricas_persona_dia.total_operarios ?? 0}</li>
-      <li><strong>Días con ingreso:</strong> ${resumen.metricas_persona_dia.operarios_con_actividad ?? 0}</li>
-      <li><strong>Días sin ingreso:</strong> ${resumen.metricas_persona_dia.operarios_sin_actividad ?? 0}</li>
-      <li><strong>Días con duplicados:</strong> ${resumen.metricas_persona_dia.duplicados_detectados ?? 0}</li>
+      <li><strong>Detalle auditado (persona-dia):</strong> ${resumen.metricas_persona_dia.total_operarios ?? 0}</li>
+      <li><strong>Dias con ingreso:</strong> ${resumen.metricas_persona_dia.operarios_con_actividad ?? 0}</li>
+      <li><strong>Dias sin ingreso:</strong> ${resumen.metricas_persona_dia.operarios_sin_actividad ?? 0}</li>
+      <li><strong>Dias con duplicados:</strong> ${resumen.metricas_persona_dia.duplicados_detectados ?? 0}</li>
+    `
+    : '';
+  const comparativoBlocks = buildEmailComparativoBlocks(comparativoVisual);
+  const chartMarkup = chartCid
+    ? `
+      <div style="margin: 20px 0 16px;">
+        <img src="cid:${chartCid}" alt="Comparativo ingreso" style="max-width: 100%; border: 1px solid #D9E2EC; border-radius: 12px; display: block;" />
+      </div>
     `
     : '';
 
@@ -797,6 +869,8 @@ function buildEmailHtml({ fechaCorte, corteTipo, resumen }) {
     <p><strong>Corte:</strong> ${fechaCorte}</p>
     <p><strong>Tipo:</strong> ${corteTipo}</p>
     <p><strong>Granularidad resumen:</strong> ${resumen.granularidad_resumen ?? 'persona_dia'}</p>
+    ${chartMarkup}
+    ${comparativoBlocks}
     <ul>
       <li><strong>Ingreso validado por:</strong> ${FORMATO_INGRESO}</li>
       <li><strong>Cumplimiento validado sobre:</strong> formatos operativos (excluye ${FORMATO_INGRESO})</li>
@@ -811,7 +885,7 @@ function buildEmailHtml({ fechaCorte, corteTipo, resumen }) {
   `;
 }
 
-async function sendIndicadorCentralEmail({ destinatarios, workbookBuffer, fechaCorte, corteTipo, resumen }) {
+async function sendIndicadorCentralEmail({ destinatarios, workbookBuffer, fechaCorte, corteTipo, resumen, comparativoVisual }) {
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465,
@@ -823,16 +897,28 @@ async function sendIndicadorCentralEmail({ destinatarios, workbookBuffer, fechaC
   });
 
   const attachmentName = `indicador_central_${corteTipo}_${fechaCorte}.xlsx`;
+  const chartCid = 'comparativo-ingreso@indicador-central';
+  const chartBuffer = await renderComparativoIngresoChart({
+    visual: comparativoVisual,
+    resumen,
+    corteTipo
+  });
   await transporter.sendMail({
     from: process.env.SMTP_FROM,
     to: destinatarios.join(', '),
     subject: `Indicador de adaptación app La Central | corte ${fechaCorte}`,
     text: `Indicador de adaptación de La Central para el corte ${fechaCorte}. Operarios evaluados: ${resumen.total_operarios ?? 0}.`,
-    html: buildEmailHtml({ fechaCorte, corteTipo, resumen }),
+    html: buildEmailHtml({ fechaCorte, corteTipo, resumen, comparativoVisual, chartCid }),
     attachments: [
       {
         filename: attachmentName,
         content: workbookBuffer
+      },
+      {
+        filename: `comparativo_ingreso_${corteTipo}_${fechaCorte}.png`,
+        content: chartBuffer,
+        cid: chartCid,
+        contentType: 'image/png'
       }
     ]
   });
@@ -925,7 +1011,8 @@ export async function runIndicadorCentralCutoff({
         workbookBuffer,
         fechaCorte: range.fechaCorte,
         corteTipo,
-        resumen: dataset.resumen
+        resumen: dataset.resumen,
+        comparativoVisual: dataset.workbook_datasets?.comparativo_ingreso_visual
       });
     }
 
