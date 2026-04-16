@@ -98,6 +98,47 @@ function normalizeGranularityLabel(value, corteTipo) {
     : "Persona-dia";
 }
 
+function buildDynamicComparativeDefinition(source) {
+  const empresaId = Number(
+    pickFirst(source, ["empresa_id", "empresaId"]),
+  );
+  const explicitKey = normalizeKey(
+    pickFirst(source, [
+      "key",
+      "id",
+      "slug",
+      "name",
+      "codigo",
+      "comparativo",
+      "segmento",
+    ]) ||
+      (Number.isInteger(empresaId) && empresaId > 0
+        ? `empresa_${empresaId}`
+        : "comparativo"),
+  );
+  const label =
+    pickFirst(source, ["label", "nombre", "title", "titulo", "etiqueta"]) ||
+    (Number.isInteger(empresaId) && empresaId > 0
+      ? `Empresa ${empresaId}`
+      : "Comparativo");
+  const subtitle =
+    pickFirst(source, [
+      "subtitle",
+      "subtitulo",
+      "contexto",
+      "granularidad_label",
+    ]) ||
+    (Number.isInteger(empresaId) && empresaId > 0
+      ? `Empresa ${empresaId}`
+      : "Comparativo");
+
+  return {
+    key: explicitKey,
+    label,
+    subtitle,
+  };
+}
+
 function resolveComparativeDefinition(item) {
   const itemKey = normalizeKey(
     pickFirst(item, [
@@ -148,7 +189,7 @@ function normalizeComparativeItem(item, fallbackDefinition, corteTipo) {
   const definition =
     resolveComparativeDefinition(source) ||
     fallbackDefinition ||
-    COMPARATIVE_ORDER[0];
+    buildDynamicComparativeDefinition(source);
   const label =
     pickFirst(source, ["label", "nombre", "title", "titulo", "etiqueta"]) ||
     definition.label;
@@ -233,8 +274,18 @@ function normalizeComparativeItem(item, fallbackDefinition, corteTipo) {
 }
 
 function collectComparatives(source, corteTipo, resumen) {
-  const comparatives = [];
   const raw = source && typeof source === "object" ? source : {};
+  const canonicalComparatives =
+    Array.isArray(raw.comparativos) && raw.comparativos.length > 0
+      ? raw.comparativos.map((item) =>
+          normalizeComparativeItem(item, null, corteTipo),
+        )
+      : null;
+
+  if (canonicalComparatives) {
+    return canonicalComparatives;
+  }
+
   const candidateCollections = [
     raw.comparativos,
     raw.items,
@@ -243,65 +294,53 @@ function collectComparatives(source, corteTipo, resumen) {
   ].find((value) => Array.isArray(value) && value.length > 0);
 
   if (candidateCollections) {
-    for (const item of candidateCollections) {
-      const definition = resolveComparativeDefinition(item);
-      const normalized = normalizeComparativeItem(item, definition, corteTipo);
-      if (definition) {
-        comparatives.push(normalized);
-      }
-    }
-  } else {
-    for (const definition of COMPARATIVE_ORDER) {
-      const candidate = raw[definition.key];
-      if (candidate !== undefined && candidate !== null) {
-        comparatives.push(
-          normalizeComparativeItem(candidate, definition, corteTipo),
-        );
-      }
-    }
-  }
-
-  if (comparatives.length === 0) {
-    comparatives.push(
-      normalizeComparativeItem(
-        {
-          key: "total",
-          label: "Total",
-          resumen: {
-            total_operarios:
-              resumen.total_operarios ??
-              Number(resumen.operarios_con_actividad ?? 0) +
-                Number(resumen.operarios_sin_actividad ?? 0),
-            operarios_con_actividad: resumen.operarios_con_actividad ?? 0,
-            operarios_sin_actividad: resumen.operarios_sin_actividad ?? 0,
-          },
-        },
-        COMPARATIVE_ORDER[0],
-        corteTipo,
-      ),
+    return candidateCollections.map((item) =>
+      normalizeComparativeItem(item, resolveComparativeDefinition(item), corteTipo),
     );
   }
 
-  const byKey = new Map();
-  for (const comparative of comparatives) {
-    byKey.set(comparative.key, comparative);
-  }
+  const legacyComparatives = [];
+  const legacyLookup = [
+    { sourceKey: "total", definition: COMPARATIVE_ORDER[0] },
+    { sourceKey: "grua_man", definition: COMPARATIVE_ORDER[1] },
+    { sourceKey: "empresa_1", definition: COMPARATIVE_ORDER[1] },
+    { sourceKey: "bomberman", definition: COMPARATIVE_ORDER[2] },
+    { sourceKey: "empresa_2", definition: COMPARATIVE_ORDER[2] },
+  ];
 
-  const ordered = [];
-  for (const definition of COMPARATIVE_ORDER) {
-    const comparative = byKey.get(definition.key);
-    if (comparative) {
-      ordered.push(comparative);
+  for (const { sourceKey, definition } of legacyLookup) {
+    const candidate = raw[sourceKey];
+    if (candidate !== undefined && candidate !== null) {
+      legacyComparatives.push(
+        normalizeComparativeItem(candidate, definition, corteTipo),
+      );
     }
   }
 
-  for (const comparative of comparatives) {
-    if (!ordered.some((item) => item.key === comparative.key)) {
-      ordered.push(comparative);
-    }
+  if (legacyComparatives.length > 0) {
+    return legacyComparatives;
   }
 
-  return ordered.slice(0, 3);
+  const totalResumen = {
+    total_operarios:
+      resumen.total_operarios ??
+      Number(resumen.operarios_con_actividad ?? 0) +
+        Number(resumen.operarios_sin_actividad ?? 0),
+    operarios_con_actividad: resumen.operarios_con_actividad ?? 0,
+    operarios_sin_actividad: resumen.operarios_sin_actividad ?? 0,
+  };
+
+  return [
+    normalizeComparativeItem(
+      {
+        key: "total",
+        label: "Total",
+        resumen: totalResumen,
+      },
+      COMPARATIVE_ORDER[0],
+      corteTipo,
+    ),
+  ];
 }
 
 function normalizeComparativoIngresoVisual({
@@ -411,7 +450,19 @@ function buildSegment({
   `;
 }
 
-function buildComparativeCard({ comparative, x, y, width }) {
+function measureComparativeCardHeight(comparative, width) {
+  const barWidth = width - 48;
+  const total = Math.max(0, Number(comparative.total) || 0);
+  const conIngreso = Math.max(0, Number(comparative.conIngreso) || 0);
+  const sinIngreso = Math.max(0, Number(comparative.sinIngreso) || 0);
+  const totalForChart = Math.max(total, conIngreso + sinIngreso) || 1;
+  const conWidth = Math.round(barWidth * (conIngreso / totalForChart));
+  const sinWidth = Math.round(barWidth * (sinIngreso / totalForChart));
+  const needsExtraHeight = conWidth < 180 || sinWidth < 180;
+  return 140 + (needsExtraHeight ? 40 : 0);
+}
+
+function buildComparativeCard({ comparative, x, y, width, cardHeight }) {
   const barX = x + 24;
   const barY = y + 54;
   const barWidth = width - 48;
@@ -420,13 +471,10 @@ function buildComparativeCard({ comparative, x, y, width }) {
   const conIngreso = Math.max(0, Number(comparative.conIngreso) || 0);
   const sinIngreso = Math.max(0, Number(comparative.sinIngreso) || 0);
   const totalForChart = Math.max(total, conIngreso + sinIngreso) || 1;
+  const resolvedCardHeight = cardHeight ?? measureComparativeCardHeight(comparative, width);
 
   let sinWidth = Math.round(barWidth * (sinIngreso / totalForChart));
   let conWidth = Math.round(barWidth * (conIngreso / totalForChart));
-  const needsExtraHeight = conWidth < 180 || sinWidth < 180;
-  const cardHeight = 140 + (needsExtraHeight ? 40 : 0);
-
-  
 
   if (conIngreso > 0 && conWidth === 0) conWidth = 4;
   if (sinIngreso > 0 && sinWidth === 0) sinWidth = 4;
@@ -445,7 +493,7 @@ function buildComparativeCard({ comparative, x, y, width }) {
       : "Sin datos suficientes para segmentar el comparativo";
 
   return `
-    <rect x="${x}" y="${y}" width="${width}" height="${cardHeight}" rx="20" fill="${COLORS.panel}" stroke="${COLORS.panelBorder}" />
+    <rect x="${x}" y="${y}" width="${width}" height="${resolvedCardHeight}" rx="20" fill="${COLORS.panel}" stroke="${COLORS.panelBorder}" />
     <text
       x="${x + 24}"
       y="${y + 32}"
@@ -526,16 +574,18 @@ function buildComparativeCard({ comparative, x, y, width }) {
 }
 
 function buildGlobalNote({ comparatives, sourceLabel, granularidad }) {
-  const hasThree = comparatives.length >= 3;
   const comparativeList = comparatives.map((item) => item.label).join(" - ");
   const sourceText =
     sourceLabel === "fallback"
       ? "Fallback derivado desde resumen"
       : "Payload visual compartido";
+  const comparativeCount = comparatives.length;
+  const comparativeCountText =
+    comparativeCount === 1
+      ? "1 comparativo renderizado"
+      : `${comparativeCount} comparativos renderizados`;
 
-  return hasThree
-    ? `Tres comparativos renderizados: ${comparativeList}. ${sourceText}. ${granularidad}.`
-    : `${comparativeList}. ${sourceText}. ${granularidad}.`;
+  return `${comparativeCountText}: ${comparativeList}. ${sourceText}. ${granularidad}.`;
 }
 
 /**
@@ -569,38 +619,39 @@ export async function renderComparativoIngresoChart({
   });
   const outerWidth = Math.max(1120, Number(width) || DEFAULT_WIDTH);
   const headerHeight = 118;
-  const cardHeight = 126;
   const cardGap = 16;
   const footerHeight = 84;
-  const computedHeight =
-    headerHeight +
-    payload.comparativos.length * cardHeight +
-    Math.max(0, payload.comparativos.length - 1) * cardGap +
-    footerHeight;
+  const marginX = 48;
+  const cardWidth = outerWidth - marginX * 2;
+  const cardHeights = payload.comparativos.map((comparative) =>
+    measureComparativeCardHeight(comparative, cardWidth),
+  );
+  const totalCardsHeight = cardHeights.reduce((acc, value) => acc + value, 0);
+  const totalGaps = Math.max(0, payload.comparativos.length - 1) * cardGap;
+  const computedHeight = headerHeight + totalCardsHeight + totalGaps + footerHeight;
   const outerHeight = Math.max(
     DEFAULT_MIN_HEIGHT,
     Number(height) || DEFAULT_MIN_HEIGHT,
     computedHeight,
   );
-  const marginX = 48;
-  const cardWidth = outerWidth - marginX * 2;
 
+  let currentY = headerHeight;
   const cards = payload.comparativos
-    .map((comparative, index) =>
-      buildComparativeCard({
+    .map((comparative, index) => {
+      const cardHeight = cardHeights[index];
+      const card = buildComparativeCard({
         comparative,
         x: marginX,
-        y: headerHeight + index * (cardHeight + cardGap),
+        y: currentY,
         width: cardWidth,
-      }),
-    )
+        cardHeight,
+      });
+      currentY += cardHeight + cardGap;
+      return card;
+    })
     .join("\n");
 
-  const footerY =
-    headerHeight +
-    payload.comparativos.length * cardHeight +
-    Math.max(0, payload.comparativos.length - 1) * cardGap +
-    30;
+  const footerY = headerHeight + totalCardsHeight + totalGaps + 30;
   const globalNote = buildGlobalNote({
     comparatives: payload.comparativos,
     sourceLabel: payload.sourceLabel,

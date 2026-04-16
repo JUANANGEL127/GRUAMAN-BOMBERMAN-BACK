@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import sharp from 'sharp';
 import {
   normalizeComparativoIngresoVisual,
   renderComparativoIngresoChart
@@ -524,10 +525,11 @@ async function addComparativoIngresoSheet(workbook, {
   }
 
   const imageBuffer = await renderComparativoIngresoChart({
-    visual: rawVisual,
+    visual: comparativoVisual,
     resumen,
     corteTipo
   });
+  const imageMetadata = await sharp(imageBuffer).metadata();
   const imageId = workbook.addImage({
     buffer: imageBuffer,
     extension: 'png'
@@ -535,7 +537,10 @@ async function addComparativoIngresoSheet(workbook, {
 
   comparativoSheet.addImage(imageId, {
     tl: { col: 1.2, row: 11.8 },
-    ext: { width: 960, height: 520 }
+    ext: {
+      width: Number(imageMetadata.width) || 960,
+      height: Number(imageMetadata.height) || 520
+    }
   });
 }
 async function generateWorkbookBuffer({

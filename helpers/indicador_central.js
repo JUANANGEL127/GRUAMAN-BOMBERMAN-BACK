@@ -461,30 +461,23 @@ function buildComparativoIngresoVisual(rows, { corteTipo = 'diario' } = {}) {
     acc.get(empresaId).rows.push(row);
     return acc;
   }, new Map());
-  const preferredOrder = [1, 2];
-  const empresaIds = [...rowsByEmpresa.keys()]
-    .sort((left, right) => {
-      const leftPriority = preferredOrder.indexOf(left);
-      const rightPriority = preferredOrder.indexOf(right);
-      if (leftPriority !== -1 || rightPriority !== -1) {
-        return (leftPriority === -1 ? Number.MAX_SAFE_INTEGER : leftPriority)
-          - (rightPriority === -1 ? Number.MAX_SAFE_INTEGER : rightPriority);
+  const empresaIds = [...rowsByEmpresa.entries()]
+    .sort((leftEntry, rightEntry) => {
+      const leftLabel = String(leftEntry[1]?.label || '').trim();
+      const rightLabel = String(rightEntry[1]?.label || '').trim();
+      const labelComparison = leftLabel.localeCompare(rightLabel, 'es', { sensitivity: 'base', numeric: true });
+      if (labelComparison !== 0) {
+        return labelComparison;
       }
-      const leftLabel = rowsByEmpresa.get(left)?.label || '';
-      const rightLabel = rowsByEmpresa.get(right)?.label || '';
-      return leftLabel.localeCompare(rightLabel, 'es');
+      return Number(leftEntry[0]) - Number(rightEntry[0]);
     })
-    .slice(0, 2);
+    .map(([empresaId]) => empresaId);
 
   const comparativos = [
     { key: 'total', label: 'Total', empresa_id: null, rows },
     ...empresaIds
       .map((empresaId) => ({
-        key: empresaId === 1
-          ? 'grua_man'
-          : empresaId === 2
-            ? 'bomberman'
-            : `empresa_${empresaId}`,
+        key: `empresa_${empresaId}`,
         label: rowsByEmpresa.get(empresaId)?.label || `Empresa ${empresaId}`,
         empresa_id: empresaId,
         rows: rowsByEmpresa.get(empresaId)?.rows || []
