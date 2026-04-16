@@ -21,6 +21,10 @@ const FORM_TABLE_META = {
 
 const FORMATO_INGRESO = 'horas_jornada';
 const DEFAULT_SCOPE_EMPRESA_IDS = [1, 2];
+const COMPARATIVO_EMPRESA_LABELS = {
+  1: 'Grua Man',
+  2: 'Bomberman'
+};
 
 const DEFAULT_FORMATOS_POR_EMPRESA = {
   '1': ['chequeo_alturas', 'chequeo_elevador', 'inspeccion_epcc', 'inspeccion_izaje', 'permiso_trabajo', 'chequeo_torregruas', 'horas_jornada'],
@@ -443,10 +447,48 @@ function summarizeIndicadorRows(rows, { corteTipo = 'diario' } = {}) {
 
 function buildComparativoIngresoVisual(rows, { corteTipo = 'diario' } = {}) {
   const isMonthly = isMonthlyUniqueCutoff(corteTipo);
+  const rowsByEmpresa = rows.reduce((acc, row) => {
+    const empresaId = Number(row.empresa_id || 0);
+    if (!Number.isInteger(empresaId) || empresaId <= 0) {
+      return acc;
+    }
+    if (!acc.has(empresaId)) {
+      acc.set(empresaId, {
+        rows: [],
+        label: COMPARATIVO_EMPRESA_LABELS[empresaId] || String(row.empresa || '').trim() || `Empresa ${empresaId}`
+      });
+    }
+    acc.get(empresaId).rows.push(row);
+    return acc;
+  }, new Map());
+  const preferredOrder = [1, 2];
+  const empresaIds = [...rowsByEmpresa.keys()]
+    .sort((left, right) => {
+      const leftPriority = preferredOrder.indexOf(left);
+      const rightPriority = preferredOrder.indexOf(right);
+      if (leftPriority !== -1 || rightPriority !== -1) {
+        return (leftPriority === -1 ? Number.MAX_SAFE_INTEGER : leftPriority)
+          - (rightPriority === -1 ? Number.MAX_SAFE_INTEGER : rightPriority);
+      }
+      const leftLabel = rowsByEmpresa.get(left)?.label || '';
+      const rightLabel = rowsByEmpresa.get(right)?.label || '';
+      return leftLabel.localeCompare(rightLabel, 'es');
+    })
+    .slice(0, 2);
+
   const comparativos = [
     { key: 'total', label: 'Total', empresa_id: null, rows },
-    { key: 'grua_man', label: 'Grua Man', empresa_id: 1, rows: rows.filter((row) => Number(row.empresa_id) === 1) },
-    { key: 'bomberman', label: 'Bomberman', empresa_id: 2, rows: rows.filter((row) => Number(row.empresa_id) === 2) }
+    ...empresaIds
+      .map((empresaId) => ({
+        key: empresaId === 1
+          ? 'grua_man'
+          : empresaId === 2
+            ? 'bomberman'
+            : `empresa_${empresaId}`,
+        label: rowsByEmpresa.get(empresaId)?.label || `Empresa ${empresaId}`,
+        empresa_id: empresaId,
+        rows: rowsByEmpresa.get(empresaId)?.rows || []
+      }))
   ].map((segment) => {
     const resumen = summarizeIndicadorRows(segment.rows, { corteTipo });
     return {
@@ -938,23 +980,21 @@ export async function runIndicadorCentralCutoff({
   const config = validateRuntimeConfig(activeConfig, { canal, omitirEnvio });
   const range = resolveRangeForCutoff({ corteTipo, fechaCorte });
 
-  if (!omitirEnvio) {
-    const existingSuccess = await resolvedDb.query(
-      `SELECT *
-         FROM indicador_central_ejecuciones
-        WHERE corte_tipo = $1
-          AND corte_fecha = $2
-          AND canal = $3
-          AND estado = 'success'
-        LIMIT 1`,
-      [corteTipo, range.fechaCorte, canal]
-    );
-    if (existingSuccess.rows.length > 0) {
-      return {
-        already_processed: true,
-        ejecucion: existingSuccess.rows[0]
-      };
-    }
+  const existingSuccess = await resolvedDb.query(
+    `SELECT *
+       FROM indicador_central_ejecuciones
+      WHERE corte_tipo = $1
+        AND corte_fecha = $2
+        AND canal = $3
+        AND estado = 'success'
+      LIMIT 1`,
+    [corteTipo, range.fechaCorte, canal]
+  );
+  if (existingSuccess.rows.length > 0) {
+    return {
+      already_processed: true,
+      ejecucion: existingSuccess.rows[0]
+    };
   }
 
   const insertExecution = await resolvedDb.query(
