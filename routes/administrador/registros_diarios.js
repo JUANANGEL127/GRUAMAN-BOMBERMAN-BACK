@@ -29,7 +29,7 @@ function buildFechaPagination(startDate, endDate, limit = 200, offset = 0) {
 }
 
 function buildRuntimeConfig(nombre) {
-  const defaults = getIndicadorCentralDefaultConfig();
+  const defaults = getIndicadorCentralDefaultConfig();  
   return normalizeIndicadorCentralConfig({
     ...defaults,
     distribucion_habilitada: true,
@@ -94,7 +94,8 @@ router.post('/buscar', async (req, res) => {
  */
 router.post('/descargar', async (req, res) => {
   try {
-    const { nombre, fecha_inicio, fecha_fin, limit = 10000 } = req.body || {};
+    const { nombre, fecha_inicio, fecha_fin, limit = 10000, corte_tipo} = req.body || {};
+    
     const startDate = formatDateOnly(fecha_inicio) || todayDateString();
     const endDate = formatDateOnly(fecha_fin) || todayDateString();
     const fechasPaginadas = buildFechaPagination(startDate, endDate, Math.min(Number(limit), 10000), 0);
@@ -102,18 +103,18 @@ router.post('/descargar', async (req, res) => {
     const dataset = await buildIndicadorCentralDataset({
       fechaDesde: startDate,
       fechaHasta: endDate,
-      corteTipo: 'diario',
+      corteTipo: corte_tipo ?? 'diario',
       configuracion: buildRuntimeConfig(nombre),
       persistirSnapshot: false,
       db: global.db
     });
 
     const rows = dataset.rows.filter((row) => fechasPaginadas.includes(row.fecha));
-    const workbookDatasets = buildIndicadorCentralWorkbookDatasets(rows, { corteTipo: 'diario' });
+    const workbookDatasets = buildIndicadorCentralWorkbookDatasets(rows, { corteTipo: corte_tipo });
     const buffer = await generateRegistrosDiariosWorkbookBuffer({
       rows,
       resumen: workbookDatasets.resumen,
-      corteTipo: 'diario',
+      corteTipo: corte_tipo,
       fechaCorte: endDate,
       fechaDesde: startDate,
       fechaHasta: endDate,

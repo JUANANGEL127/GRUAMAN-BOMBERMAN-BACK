@@ -1182,7 +1182,22 @@ async function ejecutarConLock(nombreTarea, callback) {
 }
 
 cron.schedule('0 0 * * *', async () => {
-  await ejecutarConLock('indicador_central_mensual_acumulado_0000', async () => {
+  await ejecutarConLock('indicador_central_diario_0000', async () => {
+    try {
+      await runIndicadorCentralCutoff({
+        corteTipo: 'diario',
+        origen: 'cron',
+        canal: 'email',
+        db: pool
+      });
+    } catch (err) {
+      console.error('Error ejecutando indicador central diario:', err.message);
+    }
+  });
+}, { timezone: CRON_TIMEZONE });
+
+cron.schedule('0 1 1 * *', async () => {
+  await ejecutarConLock('indicador_central_mensual_acumulado_01', async () => {
     try {
       await runIndicadorCentralCutoff({
         corteTipo: 'mensual_acumulado',
@@ -1194,7 +1209,8 @@ cron.schedule('0 0 * * *', async () => {
       console.error('Error ejecutando indicador central mensual acumulado:', err.message);
     }
   });
-}, { timezone: CRON_TIMEZONE });
+}, {timezone: CRON_TIMEZONE})
+
 cron.schedule('30 6 * * *', async () => {
   await ejecutarConLock('buenos_dias_630', async () => {
     const result = await pool.query(`
