@@ -136,7 +136,7 @@ function validateIndicadorCentralConfigShape(config) {
   return normalized;
 }
 
-function validateRuntimeConfig(config, { canal = 'email', omitirEnvio = false } = {}) {
+export function validateRuntimeConfig(config, { canal = 'email', omitirEnvio = false } = {}) {
   if (!config) {
     throw new Error('No existe una configuración activa para el indicador central');
   }

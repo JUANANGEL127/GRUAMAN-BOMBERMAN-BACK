@@ -2,11 +2,14 @@ import { Router } from "express";
 import {
   buildIndicadorCentralDataset,
   buildIndicadorCentralWorkbookDatasets,
+  getActiveIndicadorCentralConfig,
   getIndicadorCentralDefaultConfig,
   normalizeIndicadorCentralConfig,
+  validateRuntimeConfig,
 } from '../../helpers/indicador_central.js';
 import { generateRegistrosDiariosWorkbookBuffer } from '../../helpers/indicador_central_excel.js';
 import { formatDateOnly, parseDateLocal, todayDateString } from '../../helpers/dateUtils.js';
+
 
 const router = Router();
 
@@ -99,12 +102,14 @@ router.post('/descargar', async (req, res) => {
     const startDate = formatDateOnly(fecha_inicio) || todayDateString();
     const endDate = formatDateOnly(fecha_fin) || todayDateString();
     const fechasPaginadas = buildFechaPagination(startDate, endDate, Math.min(Number(limit), 10000), 0);
+    const avtiveConfig = await getActiveIndicadorCentralConfig(global.db);
+    const config = validateRuntimeConfig(avtiveConfig,{canal:'manual', omitirEnvio:true})
 
     const dataset = await buildIndicadorCentralDataset({
       fechaDesde: startDate,
       fechaHasta: endDate,
       corteTipo: corte_tipo ?? 'diario',
-      configuracion: buildRuntimeConfig(nombre),
+      configuracion: config,
       persistirSnapshot: false,
       db: global.db
     });
