@@ -40,6 +40,7 @@ import registrosDiariosRouter from './routes/administrador/registros_diarios.js'
 import indicadorCentralRouter from './routes/administrador/indicador_central.js';
 import authPinRouter from './routes/auth_pin.js';
 import pqrRouter from './routes/sst/pqr.js';
+import empresaRouter from './routes/empresa/empresa.js'
 import { getIndicadorCentralDefaultConfig, runIndicadorCentralCutoff } from './helpers/indicador_central.js';
 
 import dotenv from "dotenv";
@@ -751,6 +752,8 @@ app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
 app.use("/bomberman/herramientas_mantenimiento", herramientasMantenimientoRouter);
 app.use("/bomberman/kit_limpieza", kitLimpiezaRouter);
 app.use("/sst/pqr", pqrRouter);
+app.use("/roles/empresas",empresaRouter);
+
 // /horas_jornada se monta dentro del IIFE de inicio
 
 const PORT = process.env.PORT || 3000;
