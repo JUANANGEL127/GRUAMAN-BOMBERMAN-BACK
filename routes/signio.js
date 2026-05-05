@@ -4,6 +4,23 @@ import FormData from 'form-data';
 import { PDFDocument } from 'pdf-lib';
 
 const router = express.Router();
+let authenticateSession = null;
+let requireAdminRead = null;
+
+export function configureSignioAuth(dependencies) {
+  authenticateSession = dependencies.authenticateSession;
+  requireAdminRead = dependencies.requireAdminRead;
+}
+
+function requireConfiguredAdminSession(req, res, next) {
+  if (!authenticateSession || !requireAdminRead) {
+    return res.status(500).json({ success: false, error: "Authentication is not configured" });
+  }
+  return authenticateSession(req, res, (authError) => {
+    if (authError) return next(authError);
+    return requireAdminRead(req, res, next);
+  });
+}
 
 /**
  * Caché del token para evitar solicitudes de autenticación redundantes.
@@ -435,7 +452,7 @@ export async function enviarDocumentoAFirmar({
  * }}
  * @returns {{ success: boolean, id_transaccion: string, url_firma: string|null, mensaje: string }}
  */
-router.post('/enviar-firma', async (req, res) => {
+router.post('/enviar-firma', requireConfiguredAdminSession, async (req, res) => {
   try {
     const {
       nombre_documento,
@@ -547,7 +564,7 @@ router.post('/webhook', async (req, res) => {
  * Consulta primero la BD local; si no hay datos, hace una llamada en vivo a la API de Signio.
  * @param {string} id_transaccion
  */
-router.get('/estado/:id_transaccion', async (req, res) => {
+router.get('/estado/:id_transaccion', requireConfiguredAdminSession, async (req, res) => {
   try {
     const { id_transaccion } = req.params;
 
@@ -577,7 +594,7 @@ router.get('/estado/:id_transaccion', async (req, res) => {
  * Consulta primero la BD local; si no hay datos, hace una llamada en vivo a la API de Signio.
  * @param {string} id_transaccion
  */
-router.get('/documento/:id_transaccion', async (req, res) => {
+router.get('/documento/:id_transaccion', requireConfiguredAdminSession, async (req, res) => {
   try {
     const { id_transaccion } = req.params;
 
@@ -610,7 +627,7 @@ router.get('/documento/:id_transaccion', async (req, res) => {
  * Lista las transacciones de Signio filtradas por estado.
  * @query {number} estado - 0: todas, 2: pendientes, 3: firmadas, 4: rechazadas.
  */
-router.get('/listar', async (req, res) => {
+router.get('/listar', requireConfiguredAdminSession, async (req, res) => {
   try {
     const { estado } = req.query;
     const token = await getSignioToken();

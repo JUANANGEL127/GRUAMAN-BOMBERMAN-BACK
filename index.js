@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import pkg from "pg";
 import bcrypt from "bcrypt";
 import webpush from "web-push";
@@ -34,16 +35,29 @@ import adminUsuariosRouter from "./routes/administrador/admin_usuarios.js";
 import adminObrasRouter from "./routes/administrador/admin_obras.js";
 // adminHorasExtraRouter se importa dinámicamente dentro del IIFE de inicio para
 // garantizar que global.db esté disponible antes de que se evalúe el módulo.
-import webauthnRouter from './routes/webauthn.js';
-import signioRouter from './routes/signio.js';
+import webauthnRouter, { configureWebAuthnSession } from './routes/webauthn.js';
+import signioRouter, { configureSignioAuth } from './routes/signio.js';
 import registrosDiariosRouter from './routes/administrador/registros_diarios.js';
 import indicadorCentralRouter from './routes/administrador/indicador_central.js';
-import authPinRouter from './routes/auth_pin.js';
+import authPinRouter, { configureAuthPinSession } from './routes/auth_pin.js';
 import pqrRouter from './routes/sst/pqr.js';
 import empresaRouter from './routes/empresa/empresa.js'
 import { getIndicadorCentralDefaultConfig, runIndicadorCentralCutoff } from './helpers/indicador_central.js';
+import { createAuthConfig, isLocalhostOrigin } from "./config/authConfig.js";
+import { createAuthSessionController } from "./controllers/authSessionController.js";
+import { createAuthSessionRouter } from "./routes/auth_session.js";
+import { createAuthenticateSession } from "./middlewares/authenticateSession.js";
+import { createCsrfProtection } from "./middlewares/csrfProtection.js";
+import { createAuthDebugLogger } from "./middlewares/authDebugLogger.js";
+import { requirePermission } from "./middlewares/requirePermission.js";
+import { requireRole } from "./middlewares/requireRole.js";
+import { requireWorkerSelfOrAdmin } from "./middlewares/requireWorkerSelfOrAdmin.js";
+import { initializeAuthSessionSchema, createAuthSessionRepository } from "./repositories/authSessionRepository.js";
+import { createAuthSessionService } from "./services/authSessionService.js";
+import { writeAuthCookies } from "./helpers/authCookies.js";
 
 import dotenv from "dotenv";
+import { log } from "console";
 if (process.env.NODE_ENV === "production") {
   dotenv.config({ path: ".env" });
 } else {
@@ -80,33 +94,31 @@ async function sendPushNotification(subscription, payload) {
 
 const { Pool } = pkg;
 const app = express();
+const authConfig = createAuthConfig();
 
-/**
- * Orígenes CORS permitidos. Las solicitudes sin cabecera de origen (Postman, apps móviles)
- * y cualquier origen de localhost o 127.0.0.1 siempre se permiten.
- */
-const allowedOrigins = [
-  process.env.FRONTEND_URL || 'https://gruaman-bomberman-front.onrender.com',
-  'https://gruaman-bomberman-front.onrender.com',
-];
+// Credentialed CORS must use exact origins. Localhost is allowed by default only outside production.
+function isAllowedCorsOrigin(origin) {
+  if (!origin) return true;
+  if (authConfig.cors.allowLocalhost && isLocalhostOrigin(origin)) return true;
+  return authConfig.cors.allowedOrigins.includes(origin);
+}
+
+app.use(createAuthDebugLogger());
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error('Not allowed by CORS'));
+    if (isAllowedCorsOrigin(origin)) return callback(null, true);
+    callback(new Error("Not allowed by CORS"));
   },
-  credentials: true
+  credentials: true,
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "X-CSRF-Token", authConfig.csrf.headerName],
+  optionsSuccessStatus: 204
 }));
+app.use(cookieParser());
 app.use(express.json());
-app.use("/bomberman/planillabombeo", planillaBombeoRouter);
-app.use("/bomberman/checklist", checklistRouter);
 app.use('/webauthn', webauthnRouter);
 app.use('/signio', signioRouter);
 app.use('/auth/pin', authPinRouter);
-app.use('/api', registrosDiariosRouter);
-app.use('/administrador/registros_diarios', registrosDiariosRouter);
-app.use('/administrador/indicador_central', indicadorCentralRouter);
 
 const pool = process.env.DATABASE_URL
   ? new Pool({
@@ -122,6 +134,29 @@ const pool = process.env.DATABASE_URL
     });
 
 global.db = pool;
+
+const authSessionRepository = createAuthSessionRepository({ db: pool });
+const authSessionService = createAuthSessionService({
+  db: pool,
+  sessionRepository: authSessionRepository,
+  authConfig
+});
+const authSessionController = createAuthSessionController({
+  authSessionService,
+  authConfig
+});
+const csrfProtection = createCsrfProtection({ authConfig });
+const authenticateSession = createAuthenticateSession({ authSessionService, authConfig });
+const requireAdminRead = requirePermission("admin:read");
+const requireGruamanAdmin = requirePermission("admin:gruaman:*");
+const requireBombermanAdmin = requirePermission("admin:bomberman:*");
+const requireAuthenticatedActor = requireRole("worker", "admin:gruaman", "admin:bomberman");
+const requireBodyWorkerSelfOrAdmin = requireWorkerSelfOrAdmin((req) => req.body?.numero_identificacion);
+
+configureAuthPinSession({ authSessionService, authConfig, authenticateSession, csrfProtection });
+configureWebAuthnSession({ authSessionService, authConfig, authenticateSession, csrfProtection });
+configureSignioAuth({ authenticateSession, requireAdminRead });
+app.use('/auth', createAuthSessionRouter({ authSessionController, csrfProtection }));
 
 /**
  * IIFE de inicio: ejecuta todas las migraciones idempotentes CREATE TABLE / ALTER TABLE,
@@ -469,6 +504,8 @@ global.db = pool;
     );
   `);
 
+  await initializeAuthSessionSchema(pool);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS push_subscriptions (
       trabajador_id INT PRIMARY KEY,
@@ -680,10 +717,10 @@ global.db = pool;
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_ats_fecha   ON ats (fecha_elaboracion)`).catch(() => {});
 
   const { default: adminHorasExtraRouter } = await import("./routes/administrador/admin_horas_extra.js");
-  app.use("/administrador/admin_horas_extra", adminHorasExtraRouter);
+  app.use("/administrador/admin_horas_extra", authenticateSession, requireAdminRead, csrfProtection, adminHorasExtraRouter);
 
   const { default: horaJornadaRouter } = await import("./routes/compartido/hora_llegada_salida.js");
-  app.use("/horas_jornada", horaJornadaRouter);
+  app.use("/horas_jornada", authenticateSession, requireAuthenticatedActor, csrfProtection, horaJornadaRouter);
 })();
 
 /**
@@ -692,7 +729,7 @@ global.db = pool;
  * @body {{ numero_identificacion: string, title: string, body: string }}
  * @returns {{ success: boolean, message: string }}
  */
-app.post("/push/test", async (req, res) => {
+app.post("/push/test", authenticateSession, requireAdminRead, csrfProtection, async (req, res) => {
   const { numero_identificacion, title, body } = req.body;
   if (!numero_identificacion || !title || !body) {
     return res.status(400).json({ error: "Faltan parámetros obligatorios (numero_identificacion, title, body)" });
@@ -724,34 +761,39 @@ app.post("/push/test", async (req, res) => {
   }
 });
 
-app.use("/administrador", administradorRouter);
-app.use("/permiso_trabajo_admin", administradorRouter);
-app.use("/inspeccion_izaje_admin", inspeccionIzajeAdminRouter);
-app.use("/inspeccion_epcc_admins", inspeccionEPCCAdminsRouter);
-app.use("/chequeo_torregruas_admin", chequeoTorregruasAdminRouter);
-app.use("/chequeo_elevador_admin", chequeoElevadorAdminRouter);
-app.use("/chequeo_alturas_admin", chequeoAlturasAdminRouter);
-app.use("/planilla_bombeo_admin", planillaBombeoAdminRouter);
-app.use("/inventarios_obra_admin", inventariosObraAdminRouter);
-app.use("/inspeccion_epcc_bomberman_admin", inspeccionEpccBombermanAdminRouter);
-app.use("/checklist_admin", checklistAdminRouter);
-app.use("/herramientas_mantenimiento_admin", herramientasMantenimientoAdminRouter);
-app.use("/kit_limpieza_admin", kitLimpiezaAdminRouter);
-app.use("/admin_usuarios", adminUsuariosRouter);
-app.use("/admin_obras", adminObrasRouter);
+app.use('/api', authenticateSession, requireAdminRead, csrfProtection, registrosDiariosRouter);
+app.use('/administrador/registros_diarios', authenticateSession, requireAdminRead, csrfProtection, registrosDiariosRouter);
+app.use('/administrador/indicador_central', authenticateSession, requireAdminRead, csrfProtection, indicadorCentralRouter);
+app.use("/administrador", authenticateSession, requireAdminRead, csrfProtection, administradorRouter);
+app.use("/permiso_trabajo_admin", authenticateSession, requireAdminRead, csrfProtection, administradorRouter);
+app.use("/inspeccion_izaje_admin", authenticateSession, requireGruamanAdmin, csrfProtection, inspeccionIzajeAdminRouter);
+app.use("/inspeccion_epcc_admins", authenticateSession, requireGruamanAdmin, csrfProtection, inspeccionEPCCAdminsRouter);
+app.use("/chequeo_torregruas_admin", authenticateSession, requireGruamanAdmin, csrfProtection, chequeoTorregruasAdminRouter);
+app.use("/chequeo_elevador_admin", authenticateSession, requireGruamanAdmin, csrfProtection, chequeoElevadorAdminRouter);
+app.use("/chequeo_alturas_admin", authenticateSession, requireGruamanAdmin, csrfProtection, chequeoAlturasAdminRouter);
+app.use("/planilla_bombeo_admin", authenticateSession, requireBombermanAdmin, csrfProtection, planillaBombeoAdminRouter);
+app.use("/inventarios_obra_admin", authenticateSession, requireBombermanAdmin, csrfProtection, inventariosObraAdminRouter);
+app.use("/inspeccion_epcc_bomberman_admin", authenticateSession, requireBombermanAdmin, csrfProtection, inspeccionEpccBombermanAdminRouter);
+app.use("/checklist_admin", authenticateSession, requireBombermanAdmin, csrfProtection, checklistAdminRouter);
+app.use("/herramientas_mantenimiento_admin", authenticateSession, requireBombermanAdmin, csrfProtection, herramientasMantenimientoAdminRouter);
+app.use("/kit_limpieza_admin", authenticateSession, requireBombermanAdmin, csrfProtection, kitLimpiezaAdminRouter);
+app.use("/admin_usuarios", authenticateSession, requireAdminRead, csrfProtection, adminUsuariosRouter);
+app.use("/admin_obras", authenticateSession, requireAdminRead, csrfProtection, adminObrasRouter);
 // /administrador/admin_horas_extra se monta dentro del IIFE de inicio
-app.use("/compartido/permiso_trabajo", permisoTrabajoRouter);
-app.use("/compartido/chequeo_alturas", chequeoAlturasRouter);
-app.use("/gruaman/chequeo_torregruas", chequeoTorregruasRouter);
-app.use("/gruaman/inspeccion_epcc", inspeccionEpccRouter);
-app.use("/gruaman/inspeccion_izaje", inspeccionIzajeRouter);
-app.use("/gruaman/chequeo_elevador", chequeoElevadorRouter);
-app.use("/gruaman/ats", atsRouter);
-app.use("/bomberman/inventariosobra", inventariosObraRouter);
-app.use("/bomberman/inspeccion_epcc_bomberman", inspeccionEpccBombermanRouter);
-app.use("/bomberman/herramientas_mantenimiento", herramientasMantenimientoRouter);
-app.use("/bomberman/kit_limpieza", kitLimpiezaRouter);
-app.use("/sst/pqr", pqrRouter);
+app.use("/compartido/permiso_trabajo", authenticateSession, requireAuthenticatedActor, csrfProtection, permisoTrabajoRouter);
+app.use("/compartido/chequeo_alturas", authenticateSession, requireAuthenticatedActor, csrfProtection, chequeoAlturasRouter);
+app.use("/gruaman/chequeo_torregruas", authenticateSession, requireAuthenticatedActor, csrfProtection, chequeoTorregruasRouter);
+app.use("/gruaman/inspeccion_epcc", authenticateSession, requireAuthenticatedActor, csrfProtection, inspeccionEpccRouter);
+app.use("/gruaman/inspeccion_izaje", authenticateSession, requireAuthenticatedActor, csrfProtection, inspeccionIzajeRouter);
+app.use("/gruaman/chequeo_elevador", authenticateSession, requireAuthenticatedActor, csrfProtection, chequeoElevadorRouter);
+app.use("/gruaman/ats", authenticateSession, requireAuthenticatedActor, csrfProtection, atsRouter);
+app.use("/bomberman/planillabombeo", authenticateSession, requireAuthenticatedActor, csrfProtection, planillaBombeoRouter);
+app.use("/bomberman/checklist", authenticateSession, requireAuthenticatedActor, csrfProtection, checklistRouter);
+app.use("/bomberman/inventariosobra", authenticateSession, requireAuthenticatedActor, csrfProtection, inventariosObraRouter);
+app.use("/bomberman/inspeccion_epcc_bomberman", authenticateSession, requireAuthenticatedActor, csrfProtection, inspeccionEpccBombermanRouter);
+app.use("/bomberman/herramientas_mantenimiento", authenticateSession, requireAuthenticatedActor, csrfProtection, herramientasMantenimientoRouter);
+app.use("/bomberman/kit_limpieza", authenticateSession, requireAuthenticatedActor, csrfProtection, kitLimpiezaRouter);
+app.use("/sst/pqr", authenticateSession, requireAuthenticatedActor, csrfProtection, pqrRouter);
 app.use("/roles/empresas",empresaRouter);
 
 // /horas_jornada se monta dentro del IIFE de inicio
@@ -794,7 +836,7 @@ app.get("/nombres_trabajadores", async (req, res) => {
  * @body {{ nombre: string, empresa: string, empresa_id: number, obra_id: number, numero_identificacion: string }}
  * @returns {{ message: string, trabajadorId: number, nombre: string, empresa: string, empresa_id: number, obra_id: number, numero_identificacion: string }}
  */
-app.post("/datos_basicos", async (req, res) => {
+app.post("/datos_basicos", authenticateSession, requireAdminRead, csrfProtection, async (req, res) => {
   const { nombre, empresa, empresa_id, obra_id, numero_identificacion } = req.body;
 
   if (!nombre || !empresa || !empresa_id || !obra_id || !numero_identificacion) {
@@ -846,7 +888,7 @@ app.post("/datos_basicos", async (req, res) => {
  * @query {{ nombre: string, empresa: string, obra: string, numero_identificacion: string }}
  * @returns {{ trabajadorId: number, nombre: string, empresa: string, obra: string, numero_identificacion: string }}
  */
-app.get("/trabajador_id", async (req, res) => {
+app.get("/trabajador_id", authenticateSession, requireAuthenticatedActor, csrfProtection, async (req, res) => {
   const { nombre, empresa, obra, numero_identificacion } = req.query;
   if (!nombre || !empresa || !obra || !numero_identificacion) {
     return res.status(400).json({ error: "Faltan parámetros obligatorios" });
@@ -920,7 +962,7 @@ app.get("/bombas", async (req, res) => {
  * @body {{ obra_id: number, lat: number, lon: number }}
  * @returns {{ ok: boolean, message?: string }}
  */
-app.post("/validar_ubicacion", async (req, res) => {
+app.post("/validar_ubicacion", authenticateSession, requireAuthenticatedActor, csrfProtection, async (req, res) => {
   const { obra_id, lat, lon } = req.body;
   if (!obra_id || typeof lat !== "number" || typeof lon !== "number") {
     return res.status(400).json({ ok: false, message: "Parámetros inválidos" });
@@ -984,7 +1026,7 @@ function deg2rad(deg) {
  * @query {{ empresa_id?: number }}
  * @returns {{ datos: Array<{ nombre: string, empresa_id: number, numero_identificacion: string, activo: boolean, cargo: string }> }}
  */
-app.get("/datos_basicos", async (req, res) => {
+app.get("/datos_basicos", authenticateSession, requireAdminRead, csrfProtection, async (req, res) => {
   try {
     const { empresa_id } = req.query;
     let result;
@@ -1025,7 +1067,7 @@ app.post("/admin/login", async (req, res) => {
 
   const ipKey = req.ip;
   const now = Date.now();
-  const adminAttempt = adminLoginAttempts.get(ipKey) || { count: 0, resetAt: now + 15 * 60 * 1000 };
+  const adminAttempt = adminLoginAttempts.get(ipKey) || { count: 0, resetAt: now + 15 * 60 * 1000 };  
   if (now > adminAttempt.resetAt) {
     adminAttempt.count = 0;
     adminAttempt.resetAt = now + 15 * 60 * 1000;
@@ -1037,15 +1079,27 @@ app.post("/admin/login", async (req, res) => {
   adminLoginAttempts.set(ipKey, adminAttempt);
 
   try {
-    const result = await pool.query("SELECT id, password_hash, rol FROM admin_passwords");
+    const result = await pool.query("SELECT id, password_hash, rol FROM admin_passwords");    
     for (const row of result.rows) {
       const match = await bcrypt.compare(password, row.password_hash);
+      
       if (match) {
         adminLoginAttempts.delete(ipKey);
-        return res.json({ success: true, rol: row.rol });
+        const sessionResult = await authSessionService.issueAdminSession({
+          admin: row,
+          request: req
+        });
+        writeAuthCookies(res, authConfig, sessionResult);
+        return res.json({
+          success: true,
+          rol: row.rol,
+          authenticated: true,
+          user: sessionResult.user,
+          session: sessionResult.session
+        });
       }
     }
-    return res.status(401).json({ error: "Contraseña incorrecta" });
+    return res.status(401).json({ error: "Error en login, contacte a su Administrador" });
   } catch (error) {
     res.status(500).json({ error: "Error en el login" });
   }
@@ -1058,7 +1112,7 @@ app.post("/admin/login", async (req, res) => {
  * @body {{ numero_identificacion: string, subscription: object|string }}
  * @returns {{ success: boolean, action: 'inserted'|'updated' }}
  */
-app.post("/push/subscribe", async (req, res) => {
+app.post("/push/subscribe", authenticateSession, requireBodyWorkerSelfOrAdmin, csrfProtection, async (req, res) => {
   const { numero_identificacion, subscription } = req.body;
 
   if (!numero_identificacion) {
