@@ -170,11 +170,18 @@ router.post('/hasCredential', async (req, res) => {
  * @returns {PublicKeyCredentialCreationOptions}
  */
 router.post("/register/options", async (req, res) => {
-  const { numero_identificacion, nombre } = req.body;
-  if (!numero_identificacion || !nombre) {
-    return res.status(400).json({ error: "Faltan datos" });
+  const { numero_identificacion } = req.body;
+  if (!numero_identificacion) {
+    return res.status(400).json({ error: "Falta numero_identificacion" });
   }
   const db = global.db;
+  const worker = await getWorkerAuthCandidate(numero_identificacion, db);
+  if (!worker) {
+    return res.status(404).json({ error: "Usuario no encontrado" });
+  }
+  if (worker.activo === false) {
+    return sendInactiveWorkerLogin(res);
+  }
   let credenciales;
   try {
     credenciales = await getCredenciales(numero_identificacion, db);
@@ -192,7 +199,7 @@ router.post("/register/options", async (req, res) => {
       rpName,
       rpID,
       userID: Buffer.from(numero_identificacion, 'utf8'),
-      userName: nombre,
+      userName: worker.nombre || numero_identificacion,
       attestationType: "none",
       authenticatorSelection: {
         residentKey: "preferred",
