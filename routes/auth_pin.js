@@ -238,7 +238,8 @@ router.post("/verify", async (req, res) => {
       success: true,
       authenticated: true,
       user: sessionResult.user,
-      session: sessionResult.session
+      session: sessionResult.session,
+      csrfToken: sessionResult.csrfToken
     });
   } catch (err) {
     console.error("[Auth PIN] Failed to verify PIN:", err);
