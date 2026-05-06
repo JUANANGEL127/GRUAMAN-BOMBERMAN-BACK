@@ -353,6 +353,11 @@ router.post("/authenticate/verify", async (req, res) => {
   if (!numero_identificacion || !assertionResponse) {
     return res.status(400).json({ error: "Faltan datos" });
   }
+  const sanitizedAssertionResponse = {
+    ...assertionResponse,
+    id: ensureBase64url(assertionResponse.id),
+    rawId: ensureBase64url(assertionResponse.rawId)
+  };
   const db = global.db;
   const worker = await getWorkerAuthCandidate(numero_identificacion, db);
   if (!worker) {
@@ -370,7 +375,7 @@ router.post("/authenticate/verify", async (req, res) => {
   if (!expectedChallenge) {
     return res.status(400).json({ error: "No hay challenge para este usuario" });
   }
-  const credential = credenciales.find(c => assertionResponse.id === c.credential_id);
+  const credential = credenciales.find(c => sanitizedAssertionResponse.id === c.credential_id);
   if (!credential) {
     return res.status(404).json({ error: "Credencial no encontrada" });
   }
@@ -378,7 +383,7 @@ router.post("/authenticate/verify", async (req, res) => {
   try {
     const { rpID, origin } = getWebAuthnConfig();
     verification = await verifyAuthenticationResponse({
-      response: assertionResponse,
+      response: sanitizedAssertionResponse,
       expectedChallenge,
       expectedOrigin: origin,
       expectedRPID: rpID,
