@@ -29,8 +29,23 @@ export function createAuthSessionController({ authSessionService, authConfig }) 
         return res.json({
           authenticated: true,
           user: result.user,
-          session: result.session
+          session: result.session,
+          csrfToken: req.cookies?.[authConfig.cookies.csrfName] || null
         });
+      } catch (error) {
+        clearAuthCookies(res, authConfig);
+        return sendAuthError(res, error);
+      }
+    },
+
+    async getCsrf(req, res) {
+      try {
+        await validateOrRefresh(req, res);
+        const csrfToken = req.cookies?.[authConfig.cookies.csrfName];
+        if (!csrfToken) {
+          return sendAuthError(res, { code: AUTH_ERROR_CODES.UNAUTHORIZED, status: 401 });
+        }
+        return res.json({ success: true, csrfToken });
       } catch (error) {
         clearAuthCookies(res, authConfig);
         return sendAuthError(res, error);
@@ -46,7 +61,8 @@ export function createAuthSessionController({ authSessionService, authConfig }) 
         return res.json({
           authenticated: true,
           user: result.user,
-          session: result.session
+          session: result.session,
+          csrfToken: result.csrfToken
         });
       } catch (error) {
         clearAuthCookies(res, authConfig);

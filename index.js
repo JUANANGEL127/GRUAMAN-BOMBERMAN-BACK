@@ -1095,7 +1095,8 @@ app.post("/admin/login", async (req, res) => {
           rol: row.rol,
           authenticated: true,
           user: sessionResult.user,
-          session: sessionResult.session
+          session: sessionResult.session,
+          csrfToken: sessionResult.csrfToken
         });
       }
     }
