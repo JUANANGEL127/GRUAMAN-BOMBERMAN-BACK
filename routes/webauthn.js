@@ -169,7 +169,7 @@ router.post('/hasCredential', async (req, res) => {
  * @body {{ numero_identificacion: string, nombre: string }}
  * @returns {PublicKeyCredentialCreationOptions}
  */
-router.post("/register/options", requireConfiguredSession, requireWebAuthnOwnerOrAdmin, requireConfiguredCsrf, async (req, res) => {
+router.post("/register/options", async (req, res) => {
   const { numero_identificacion, nombre } = req.body;
   if (!numero_identificacion || !nombre) {
     return res.status(400).json({ error: "Faltan datos" });
