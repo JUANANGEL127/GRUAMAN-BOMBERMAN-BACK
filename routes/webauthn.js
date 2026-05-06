@@ -228,7 +228,7 @@ router.post("/register/options", async (req, res) => {
  * @returns {{ success: boolean }}
  * @throws {400} Si el challenge no existe o la verificación falla.
  */
-router.post("/register/verify", requireConfiguredSession, requireWebAuthnOwnerOrAdmin, requireConfiguredCsrf, async (req, res) => {
+router.post("/register/verify", async (req, res) => {
   const { numero_identificacion, attestationResponse } = req.body;
   if (!numero_identificacion || !attestationResponse) {
     return res.status(400).json({ error: "Faltan datos" });
