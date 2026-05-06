@@ -1,5 +1,4 @@
 import express from "express";
-import util from "util";
 import base64url from "base64url";
 import {
   generateRegistrationOptions,
@@ -7,7 +6,36 @@ import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse
 } from "@simplewebauthn/server";
+import { writeAuthCookies } from "../helpers/authCookies.js";
+import { requireWorkerSelfOrAdmin } from "../middlewares/requireWorkerSelfOrAdmin.js";
 const router = express.Router();
+let authSessionService = null;
+let authConfig = null;
+let authenticateSession = null;
+let csrfProtection = null;
+
+export function configureWebAuthnSession(dependencies) {
+  authSessionService = dependencies.authSessionService;
+  authConfig = dependencies.authConfig;
+  authenticateSession = dependencies.authenticateSession;
+  csrfProtection = dependencies.csrfProtection;
+}
+
+function requireConfiguredSession(req, res, next) {
+  if (!authenticateSession) {
+    return res.status(500).json({ success: false, error: "Authentication is not configured" });
+  }
+  return authenticateSession(req, res, next);
+}
+
+function requireConfiguredCsrf(req, res, next) {
+  if (!csrfProtection) {
+    return next();
+  }
+  return csrfProtection(req, res, next);
+}
+
+const requireWebAuthnOwnerOrAdmin = requireWorkerSelfOrAdmin((req) => req.body?.numero_identificacion);
 
 /**
  * Convierte una cadena base64 estándar a formato base64url (RFC 4648 §5).
@@ -19,9 +47,32 @@ function ensureBase64url(str) {
   return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-const rpID = process.env.WEBAUTHN_RPID;
-const rpName = process.env.WEBAUTHN_RPNAME;
-const origin = process.env.WEBAUTHN_ORIGIN;
+function getWebAuthnConfig() {
+  return {
+    rpID: process.env.WEBAUTHN_RPID,
+    rpName: process.env.WEBAUTHN_RPNAME,
+    origin: process.env.WEBAUTHN_ORIGIN
+  };
+}
+
+function isWebAuthnDebugEnabled() {
+  return ["1", "true", "yes", "on"].includes(
+    String(process.env.AUTH_DEBUG_REQUESTS || "").toLowerCase()
+  );
+}
+
+function debugWebAuthn(message, metadata = {}) {
+  if (!isWebAuthnDebugEnabled()) return;
+  console.info("[WebAuthn][debug]", { message, ...metadata });
+}
+
+function logWebAuthnError(message, err) {
+  console.error("[WebAuthn]", {
+    message,
+    errorName: err?.name || "Error",
+    errorMessage: err?.message || "Unexpected WebAuthn error"
+  });
+}
 
 /**
  * Almacén en memoria de challenges indexado por `numero_identificacion`.
@@ -57,6 +108,34 @@ async function getCredenciales(numero_identificacion, db) {
   return q.rows;
 }
 
+async function getWorkerAuthCandidate(numero_identificacion, db) {
+  const result = await db.query(
+    `SELECT
+       t.id,
+       t.numero_identificacion,
+       t.nombre,
+       t.empresa_id,
+       COALESCE(NULLIF(t.empresa, ''), e.nombre) AS empresa_slug,
+       t.obra_id,
+       t.cargo,
+       t.activo
+     FROM trabajadores t
+     LEFT JOIN empresas e ON e.id = t.empresa_id
+     WHERE t.numero_identificacion = $1`,
+    [numero_identificacion]
+  );
+  return result.rows[0] || null;
+}
+
+function sendInactiveWorkerLogin(res) {
+  return res.status(403).json({
+    success: false,
+    authenticated: false,
+    activo: false,
+    error: "Usuario inactivo"
+  });
+}
+
 /**
  * POST /webauthn/hasCredential
  * Verifica si un trabajador tiene al menos una llave de acceso (passkey) registrada.
@@ -69,11 +148,18 @@ router.post('/hasCredential', async (req, res) => {
     return res.status(400).json({ error: 'Falta numero_identificacion' });
   }
   const db = global.db;
+  const worker = await getWorkerAuthCandidate(numero_identificacion, db);
+  if (!worker) {
+    return res.json({ hasCredential: false, activo: false });
+  }
+  if (worker.activo === false) {
+    return res.json({ hasCredential: false, activo: false });
+  }
   const q = await db.query(
     'SELECT credential_id FROM webauthn_credenciales WHERE numero_identificacion = $1',
     [numero_identificacion]
   );
-  return res.json({ hasCredential: q.rows.length > 0 });
+  return res.json({ hasCredential: q.rows.length > 0, activo: true });
 });
 
 /**
@@ -83,24 +169,25 @@ router.post('/hasCredential', async (req, res) => {
  * @body {{ numero_identificacion: string, nombre: string }}
  * @returns {PublicKeyCredentialCreationOptions}
  */
-router.post("/register/options", async (req, res) => {
+router.post("/register/options", requireConfiguredSession, requireWebAuthnOwnerOrAdmin, requireConfiguredCsrf, async (req, res) => {
   const { numero_identificacion, nombre } = req.body;
-  console.log('[WebAuthn] /register/options body:', req.body);
   if (!numero_identificacion || !nombre) {
-    console.log('[WebAuthn] /register/options error: Faltan datos');
     return res.status(400).json({ error: "Faltan datos" });
   }
   const db = global.db;
   let credenciales;
   try {
     credenciales = await getCredenciales(numero_identificacion, db);
-    console.log('[WebAuthn] Credenciales encontradas:', credenciales.length);
+    debugWebAuthn("registration options credential count loaded", {
+      credentialCount: credenciales.length
+    });
   } catch (err) {
-    console.error('[WebAuthn] Error obteniendo credenciales:', err);
-    return res.status(500).json({ error: 'Error obteniendo credenciales', detalle: err.message });
+    logWebAuthnError("error loading credentials for registration options", err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
   }
   let registrationOptions;
   try {
+    const { rpID, rpName } = getWebAuthnConfig();
     registrationOptions = await generateRegistrationOptions({
       rpName,
       rpID,
@@ -116,10 +203,12 @@ router.post("/register/options", async (req, res) => {
         type: "public-key"
       }))
     });
-    console.log('[WebAuthn] registrationOptions generadas:', util.inspect(registrationOptions, { depth: null, colors: true }));
+    debugWebAuthn("registration options generated", {
+      excludeCredentialCount: credenciales.length
+    });
   } catch (err) {
-    console.error('[WebAuthn] Error generando registrationOptions:', err);
-    return res.status(500).json({ error: 'Error generando registrationOptions', detalle: err.message });
+    logWebAuthnError("error generating registration options", err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
   }
   challengeMap.set(numero_identificacion, { challenge: registrationOptions.challenge, createdAt: Date.now() });
   res.json(registrationOptions);
@@ -132,11 +221,9 @@ router.post("/register/options", async (req, res) => {
  * @returns {{ success: boolean }}
  * @throws {400} Si el challenge no existe o la verificación falla.
  */
-router.post("/register/verify", async (req, res) => {
+router.post("/register/verify", requireConfiguredSession, requireWebAuthnOwnerOrAdmin, requireConfiguredCsrf, async (req, res) => {
   const { numero_identificacion, attestationResponse } = req.body;
-  console.log('[WebAuthn] /register/verify body:', req.body);
   if (!numero_identificacion || !attestationResponse) {
-    console.log('[WebAuthn] /register/verify error: Faltan datos');
     return res.status(400).json({ error: "Faltan datos" });
   }
 
@@ -145,32 +232,30 @@ router.post("/register/verify", async (req, res) => {
     id: ensureBase64url(attestationResponse.id),
     rawId: ensureBase64url(attestationResponse.rawId)
   };
-  console.log('[WebAuthn] sanitizedResponse:', sanitizedResponse);
 
   const db = global.db;
   const challengeEntry = challengeMap.get(numero_identificacion);
   const expectedChallenge = challengeEntry ? challengeEntry.challenge : undefined;
   if (!expectedChallenge) {
-    console.log('[WebAuthn] /register/verify error: No hay challenge para este usuario');
     return res.status(400).json({ error: "No hay challenge para este usuario" });
   }
   let verification;
   try {
+    const { rpID, origin } = getWebAuthnConfig();
     verification = await verifyRegistrationResponse({
       response: sanitizedResponse,
       expectedChallenge,
       expectedOrigin: origin,
       expectedRPID: rpID
     });
-    console.log('[WebAuthn] Resultado de verificación:', verification);
   } catch (err) {
-    console.error('[WebAuthn] Error en verifyRegistrationResponse:', err);
-    return res.status(400).json({ error: "Verificación fallida", detalle: err.message });
+    logWebAuthnError("registration verification failed", err);
+    return res.status(400).json({ error: "Verificación fallida" });
   }
   if (!verification.verified) {
-    console.log('[WebAuthn] Registro no verificado:', verification);
     return res.status(400).json({ error: "Registro no verificado" });
   }
+  debugWebAuthn("registration verification completed", { verified: true });
   const { credential, credentialDeviceType } = verification.registrationInfo;
   const { id: credentialID, publicKey: credentialPublicKey, counter } = credential;
   try {
@@ -185,12 +270,12 @@ router.post("/register/verify", async (req, res) => {
         credentialDeviceType || null
       ]
     );
-    console.log('[WebAuthn] Credencial guardada en la base de datos');
   } catch (err) {
-    console.error('[WebAuthn] Error guardando credencial en la base de datos:', err);
-    return res.status(500).json({ error: 'Error guardando credencial', detalle: err.message });
+    logWebAuthnError("error storing registration credential", err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
   }
   challengeMap.delete(numero_identificacion);
+  debugWebAuthn("registration credential stored");
   res.json({ success: true });
 });
 
@@ -207,8 +292,17 @@ router.post("/authenticate/options", async (req, res) => {
     return res.status(400).json({ error: "Falta numero_identificacion" });
   }
   const db = global.db;
+  const worker = await getWorkerAuthCandidate(numero_identificacion, db);
+  if (!worker) {
+    return res.status(404).json({ error: "Usuario no encontrado" });
+  }
+  if (worker.activo === false) {
+    return sendInactiveWorkerLogin(res);
+  }
   const credenciales = await getCredenciales(numero_identificacion, db);
-  console.log('[WebAuthn] /authenticate/options - credenciales encontradas:', credenciales.length);
+  debugWebAuthn("authentication options credential count loaded", {
+    credentialCount: credenciales.length
+  });
   if (!credenciales.length) {
     return res.status(404).json({
       error: "No hay credenciales para este usuario",
@@ -216,16 +310,25 @@ router.post("/authenticate/options", async (req, res) => {
       requiereRegistro: true
     });
   }
-  const authenticationOptions = await generateAuthenticationOptions({
-    rpID,
-    userVerification: "preferred",
-    allowCredentials: credenciales.map(c => ({
-      id: c.credential_id,
-      type: "public-key",
-      transports: ["internal", "hybrid", "usb", "ble", "nfc"]
-    }))
-  });
-  console.log('[WebAuthn] authenticationOptions generadas:', util.inspect(authenticationOptions, { depth: null, colors: true }));
+  let authenticationOptions;
+  try {
+    const { rpID } = getWebAuthnConfig();
+    authenticationOptions = await generateAuthenticationOptions({
+      rpID,
+      userVerification: "preferred",
+      allowCredentials: credenciales.map(c => ({
+        id: c.credential_id,
+        type: "public-key",
+        transports: ["internal", "hybrid", "usb", "ble", "nfc"]
+      }))
+    });
+    debugWebAuthn("authentication options generated", {
+      allowCredentialCount: credenciales.length
+    });
+  } catch (err) {
+    logWebAuthnError("error generating authentication options", err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
+  }
   challengeMap.set(numero_identificacion, { challenge: authenticationOptions.challenge, createdAt: Date.now() });
   res.json(authenticationOptions);
 });
@@ -244,6 +347,13 @@ router.post("/authenticate/verify", async (req, res) => {
     return res.status(400).json({ error: "Faltan datos" });
   }
   const db = global.db;
+  const worker = await getWorkerAuthCandidate(numero_identificacion, db);
+  if (!worker) {
+    return res.status(404).json({ error: "Usuario no encontrado" });
+  }
+  if (worker.activo === false) {
+    return sendInactiveWorkerLogin(res);
+  }
   const credenciales = await getCredenciales(numero_identificacion, db);
   if (!credenciales.length) {
     return res.status(404).json({ error: "No hay credenciales para este usuario" });
@@ -259,6 +369,7 @@ router.post("/authenticate/verify", async (req, res) => {
   }
   let verification;
   try {
+    const { rpID, origin } = getWebAuthnConfig();
     verification = await verifyAuthenticationResponse({
       response: assertionResponse,
       expectedChallenge,
@@ -272,7 +383,8 @@ router.post("/authenticate/verify", async (req, res) => {
       }
     });
   } catch (err) {
-    return res.status(400).json({ error: "Verificación fallida", detalle: err.message });
+    logWebAuthnError("authentication verification failed", err);
+    return res.status(400).json({ error: "Verificación fallida" });
   }
   if (!verification.verified) {
     return res.status(400).json({ error: "Autenticación no verificada" });
@@ -281,8 +393,21 @@ router.post("/authenticate/verify", async (req, res) => {
     "UPDATE webauthn_credenciales SET sign_count = $1 WHERE credential_id = $2",
     [verification.authenticationInfo.newCounter, credential.credential_id]
   );
+  if (!authSessionService || !authConfig) {
+    return res.status(500).json({ success: false, error: "Autenticación no configurada" });
+  }
+  const sessionResult = await authSessionService.issueWorkerSession({
+    worker,
+    request: req
+  });
+  writeAuthCookies(res, authConfig, sessionResult);
   challengeMap.delete(numero_identificacion);
-  res.json({ success: true });
+  res.json({
+    success: true,
+    authenticated: true,
+    user: sessionResult.user,
+    session: sessionResult.session
+  });
 });
 
 export default router;

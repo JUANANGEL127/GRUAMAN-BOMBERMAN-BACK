@@ -1,8 +1,37 @@
 import express from "express";
 import bcrypt from "bcrypt";
+import { writeAuthCookies } from "../helpers/authCookies.js";
+import { requireWorkerSelfOrAdmin } from "../middlewares/requireWorkerSelfOrAdmin.js";
 const router = express.Router();
 
 const SALT_ROUNDS = 10;
+let authSessionService = null;
+let authConfig = null;
+let authenticateSession = null;
+let csrfProtection = null;
+
+export function configureAuthPinSession(dependencies) {
+  authSessionService = dependencies.authSessionService;
+  authConfig = dependencies.authConfig;
+  authenticateSession = dependencies.authenticateSession;
+  csrfProtection = dependencies.csrfProtection;
+}
+
+function requireConfiguredSession(req, res, next) {
+  if (!authenticateSession) {
+    return res.status(500).json({ success: false, error: "Authentication is not configured" });
+  }
+  return authenticateSession(req, res, next);
+}
+
+function requireConfiguredCsrf(req, res, next) {
+  if (!csrfProtection) {
+    return next();
+  }
+  return csrfProtection(req, res, next);
+}
+
+const requirePinOwnerOrAdmin = requireWorkerSelfOrAdmin((req) => req.body?.numero_identificacion);
 
 /**
  * Estado del limitador de tasa en memoria indexado por dirección IP.
@@ -35,6 +64,23 @@ function checkPinRateLimit(req, res) {
   return true;
 }
 
+function inactiveWorkerPinStatus() {
+  return {
+    pinHabilitado: false,
+    pinConfigurado: false,
+    activo: false
+  };
+}
+
+function sendInactiveWorkerLogin(res) {
+  return res.status(403).json({
+    success: false,
+    authenticated: false,
+    activo: false,
+    error: "Usuario inactivo"
+  });
+}
+
 /**
  * GET /auth/pin/status
  * Retorna si un trabajador tiene la autenticación por PIN habilitada y si el PIN ha sido configurado.
@@ -49,19 +95,37 @@ router.get("/status", async (req, res) => {
   try {
     const db = global.db;
     const q = await db.query(
-      "SELECT pin_habilitado, pin_hash FROM trabajadores WHERE numero_identificacion = $1",
+      `SELECT
+         t.id,
+         t.numero_identificacion,
+         t.nombre,
+         t.empresa_id,
+         COALESCE(NULLIF(t.empresa, ''), e.nombre) AS empresa_slug,
+         t.obra_id,
+         t.cargo,
+         t.activo,
+         t.pin_habilitado,
+         t.pin_hash
+       FROM trabajadores t
+       LEFT JOIN empresas e ON e.id = t.empresa_id
+       WHERE t.numero_identificacion = $1`,
       [numero_identificacion]
     );
     if (q.rows.length === 0) {
       return res.status(404).json({ error: "Usuario no encontrado" });
     }
+    if (q.rows[0].activo === false) {
+      return res.json(inactiveWorkerPinStatus());
+    }
     const { pin_habilitado, pin_hash } = q.rows[0];
     res.json({
       pinHabilitado: !!pin_habilitado,
-      pinConfigurado: !!pin_hash
+      pinConfigurado: !!pin_hash,
+      activo: true
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[Auth PIN] Failed to read PIN status:", err);
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -74,7 +138,7 @@ router.get("/status", async (req, res) => {
  * @throws {403} Si la autenticación por PIN no está habilitada para el trabajador.
  * @throws {404} Si el trabajador no existe.
  */
-router.post("/set", async (req, res) => {
+router.post("/set", requireConfiguredSession, requirePinOwnerOrAdmin, requireConfiguredCsrf, async (req, res) => {
   const { numero_identificacion, pin } = req.body;
   if (!numero_identificacion || !pin) {
     return res.status(400).json({ error: "Faltan datos" });
@@ -101,7 +165,8 @@ router.post("/set", async (req, res) => {
     );
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[Auth PIN] Failed to set PIN:", err);
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -127,11 +192,27 @@ router.post("/verify", async (req, res) => {
   try {
     const db = global.db;
     const q = await db.query(
-      "SELECT pin_habilitado, pin_hash FROM trabajadores WHERE numero_identificacion = $1",
+      `SELECT
+         t.id,
+         t.numero_identificacion,
+         t.nombre,
+         t.empresa_id,
+         COALESCE(NULLIF(t.empresa, ''), e.nombre) AS empresa_slug,
+         t.obra_id,
+         t.cargo,
+         t.activo,
+         t.pin_habilitado,
+         t.pin_hash
+       FROM trabajadores t
+       LEFT JOIN empresas e ON e.id = t.empresa_id
+       WHERE t.numero_identificacion = $1`,
       [numero_identificacion]
     );
     if (q.rows.length === 0) {
       return res.status(404).json({ error: "Usuario no encontrado" });
+    }
+    if (q.rows[0].activo === false) {
+      return sendInactiveWorkerLogin(res);
     }
     const { pin_habilitado, pin_hash } = q.rows[0];
     if (!pin_habilitado) {
@@ -145,9 +226,24 @@ router.post("/verify", async (req, res) => {
       return res.status(401).json({ success: false, error: "PIN incorrecto" });
     }
     pinLoginAttempts.delete(req.ip);
-    res.json({ success: true });
+    if (!authSessionService || !authConfig) {
+      return res.status(500).json({ success: false, error: "Autenticación no configurada" });
+    }
+    const sessionResult = await authSessionService.issueWorkerSession({
+      worker: q.rows[0],
+      request: req
+    });
+    writeAuthCookies(res, authConfig, sessionResult);
+    res.json({
+      success: true,
+      authenticated: true,
+      user: sessionResult.user,
+      session: sessionResult.session,
+      csrfToken: sessionResult.csrfToken
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[Auth PIN] Failed to verify PIN:", err);
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
