@@ -10,9 +10,6 @@ router.use((req, res, next) => {
 router.get("/", async (req, res) => {
     const db = global.db;
 
-    console.log("entra a mirar empresas");
-    
-
     try {
         const result = await db.query(`SELECT * FROM empresas ORDER BY id asc`);
 

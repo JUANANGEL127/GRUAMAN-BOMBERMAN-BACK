@@ -351,6 +351,13 @@ router.post("/register/verify", async (req, res) => {
   const sanitizedResponse = sanitizeWebAuthnCredentialResponse(attestationResponse);
 
   const db = global.db;
+  const worker = await getWorkerAuthCandidate(numero_identificacion, db);
+  if (!worker) {
+    return res.status(404).json({ error: "Usuario no encontrado" });
+  }
+  if (worker.activo === false) {
+    return sendInactiveWorkerLogin(res);
+  }
   const clientChallenge = sanitizedResponse?.response?.clientDataJSON
     ? JSON.parse(Buffer.from(sanitizedResponse.response.clientDataJSON, "base64url").toString("utf8"))?.challenge
     : undefined;
@@ -401,7 +408,21 @@ router.post("/register/verify", async (req, res) => {
   }
   consumeChallenge(numero_identificacion, expectedChallenge);
   debugWebAuthn("registration credential stored");
-  res.json({ success: true });
+  if (!authSessionService || !authConfig) {
+    return res.json({ success: true });
+  }
+  const sessionResult = await authSessionService.issueWorkerSession({
+    worker,
+    request: req
+  });
+  writeAuthCookies(res, authConfig, sessionResult);
+  return res.json({
+    success: true,
+    authenticated: true,
+    user: sessionResult.user,
+    session: sessionResult.session,
+    csrfToken: sessionResult.csrfToken
+  });
 });
 
 /**
