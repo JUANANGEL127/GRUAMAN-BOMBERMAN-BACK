@@ -57,6 +57,44 @@ function decodeBase64Flexible(value) {
   return Buffer.from(padded, "base64");
 }
 
+function looksLikeBase64(value) {
+  if (!value) return false;
+  return /^[A-Za-z0-9+/_=-]+$/.test(value);
+}
+
+function getPublicKeyCandidates(storedPublicKey) {
+  const candidates = [];
+  const pushCandidate = (bytes) => {
+    if (!bytes || bytes.length === 0) return;
+    if (!candidates.some((entry) => Buffer.compare(entry, bytes) === 0)) {
+      candidates.push(bytes);
+    }
+  };
+
+  if (Buffer.isBuffer(storedPublicKey)) {
+    pushCandidate(storedPublicKey);
+    const asText = storedPublicKey.toString("utf8").trim();
+    if (looksLikeBase64(asText)) {
+      try {
+        pushCandidate(decodeBase64Flexible(asText));
+      } catch (_) {
+        // ignore invalid candidate
+      }
+    }
+    return candidates;
+  }
+
+  const asString = String(storedPublicKey || "").trim();
+  if (looksLikeBase64(asString)) {
+    try {
+      pushCandidate(decodeBase64Flexible(asString));
+    } catch (_) {
+      // ignore invalid candidate
+    }
+  }
+  return candidates;
+}
+
 function sanitizeWebAuthnCredentialResponse(response) {
   if (!response) return response;
   return {
@@ -113,6 +151,7 @@ function logWebAuthnError(message, err) {
 const challengeMap = new Map();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const MAX_CHALLENGES_PER_USER = 5;
+let webauthnPublicKeyColumnType = null;
 
 function addChallenge(numero_identificacion, challenge) {
   const now = Date.now();
@@ -140,6 +179,24 @@ function consumeChallenge(numero_identificacion, challenge) {
   const next = entries.filter((entry) => entry.challenge !== challenge);
   if (next.length > 0) challengeMap.set(numero_identificacion, next);
   else challengeMap.delete(numero_identificacion);
+}
+
+async function resolvePublicKeyColumnType(db) {
+  if (webauthnPublicKeyColumnType) return webauthnPublicKeyColumnType;
+  try {
+    const result = await db.query(
+      `SELECT data_type
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'webauthn_credenciales'
+         AND column_name = 'public_key'
+       LIMIT 1`
+    );
+    webauthnPublicKeyColumnType = result.rows[0]?.data_type || "text";
+  } catch (_) {
+    webauthnPublicKeyColumnType = "text";
+  }
+  return webauthnPublicKeyColumnType;
 }
 
 setInterval(() => {
@@ -323,13 +380,17 @@ router.post("/register/verify", async (req, res) => {
   const { credential, credentialDeviceType } = verification.registrationInfo;
   const { id: credentialID, publicKey: credentialPublicKey, counter } = credential;
   try {
+    const publicKeyColumnType = await resolvePublicKeyColumnType(db);
+    const serializedPublicKey = publicKeyColumnType === "bytea"
+      ? Buffer.from(credentialPublicKey)
+      : Buffer.from(credentialPublicKey).toString("base64url");
     await db.query(
       `INSERT INTO webauthn_credenciales (numero_identificacion, credential_id, public_key, sign_count, tipo_autenticador)
        VALUES ($1, $2, $3, $4, $5)`,
       [
         numero_identificacion,
         credentialID,
-        Buffer.from(credentialPublicKey).toString("base64"),
+        serializedPublicKey,
         counter,
         credentialDeviceType || null
       ]
@@ -436,23 +497,41 @@ router.post("/authenticate/verify", async (req, res) => {
   if (!credential) {
     return res.status(404).json({ error: "Credencial no encontrada" });
   }
-  let verification;
-  try {
-    const { rpID, origin } = getWebAuthnConfig();
-    verification = await verifyAuthenticationResponse({
-      response: sanitizedAssertionResponse,
-      expectedChallenge,
-      expectedOrigin: origin,
-      expectedRPID: rpID,
-      credential: {
-        id: credential.credential_id,
-        publicKey: decodeBase64Flexible(credential.public_key),
-        counter: credential.sign_count,
-        transports: ["internal"]
+  const { rpID, origin } = getWebAuthnConfig();
+  const publicKeyCandidates = getPublicKeyCandidates(credential.public_key);
+  if (publicKeyCandidates.length === 0) {
+    logWebAuthnError("authentication verification failed", new Error("Stored credential public_key is empty/invalid"));
+    return res.status(400).json({ error: "Verificación fallida" });
+  }
+
+  let verification = null;
+  let lastVerificationError = null;
+  for (const publicKeyCandidate of publicKeyCandidates) {
+    try {
+      const candidateVerification = await verifyAuthenticationResponse({
+        response: sanitizedAssertionResponse,
+        expectedChallenge,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
+        credential: {
+          id: credential.credential_id,
+          publicKey: new Uint8Array(publicKeyCandidate),
+          counter: credential.sign_count,
+          transports: ["internal"]
+        }
+      });
+      if (candidateVerification?.verified) {
+        verification = candidateVerification;
+        break;
       }
-    });
-  } catch (err) {
-    logWebAuthnError("authentication verification failed", err);
+      lastVerificationError = new Error("Authentication response was not verified");
+    } catch (err) {
+      lastVerificationError = err;
+    }
+  }
+
+  if (!verification) {
+    logWebAuthnError("authentication verification failed", lastVerificationError || new Error("No valid public key candidate worked"));
     return res.status(400).json({ error: "Verificación fallida" });
   }
   if (!verification.verified) {
@@ -480,3 +559,4 @@ router.post("/authenticate/verify", async (req, res) => {
 });
 
 export default router;
+
