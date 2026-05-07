@@ -49,6 +49,9 @@ function ensureBase64url(str) {
 
 function decodeBase64Flexible(value) {
   if (!value) return null;
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
   const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
   return Buffer.from(padded, "base64");
