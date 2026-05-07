@@ -47,6 +47,23 @@ function ensureBase64url(str) {
   return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+function sanitizeWebAuthnCredentialResponse(response) {
+  if (!response) return response;
+  return {
+    ...response,
+    id: ensureBase64url(response.id),
+    rawId: ensureBase64url(response.rawId),
+    response: {
+      ...response.response,
+      clientDataJSON: ensureBase64url(response.response?.clientDataJSON),
+      authenticatorData: ensureBase64url(response.response?.authenticatorData),
+      signature: ensureBase64url(response.response?.signature),
+      userHandle: ensureBase64url(response.response?.userHandle),
+      attestationObject: ensureBase64url(response.response?.attestationObject)
+    }
+  };
+}
+
 function getWebAuthnConfig() {
   return {
     rpID: process.env.WEBAUTHN_RPID,
@@ -81,16 +98,46 @@ function logWebAuthnError(message, err) {
  * NOTA: Este Map se limpia al reiniciar el servidor (ej. arranques en frío de Render free-tier),
  * lo que invalida cualquier ceremonia WebAuthn en curso. La solución definitiva es
  * persistir los challenges en la base de datos.
- * @type {Map<string, { challenge: string, createdAt: number }>}
+ * @type {Map<string, Array<{ challenge: string, createdAt: number }>>}
  */
 const challengeMap = new Map();
+const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const MAX_CHALLENGES_PER_USER = 5;
+
+function addChallenge(numero_identificacion, challenge) {
+  const now = Date.now();
+  const previous = challengeMap.get(numero_identificacion) || [];
+  const next = [{ challenge, createdAt: now }, ...previous]
+    .filter((entry) => now - entry.createdAt <= CHALLENGE_TTL_MS)
+    .slice(0, MAX_CHALLENGES_PER_USER);
+  challengeMap.set(numero_identificacion, next);
+}
+
+function getExpectedChallenge(numero_identificacion, clientChallenge) {
+  const now = Date.now();
+  const entries = challengeMap.get(numero_identificacion) || [];
+  const fresh = entries.filter((entry) => now - entry.createdAt <= CHALLENGE_TTL_MS);
+  if (fresh.length !== entries.length) {
+    if (fresh.length > 0) challengeMap.set(numero_identificacion, fresh);
+    else challengeMap.delete(numero_identificacion);
+  }
+  const match = fresh.find((entry) => entry.challenge === clientChallenge);
+  return match ? match.challenge : null;
+}
+
+function consumeChallenge(numero_identificacion, challenge) {
+  const entries = challengeMap.get(numero_identificacion) || [];
+  const next = entries.filter((entry) => entry.challenge !== challenge);
+  if (next.length > 0) challengeMap.set(numero_identificacion, next);
+  else challengeMap.delete(numero_identificacion);
+}
 
 setInterval(() => {
   const now = Date.now();
-  for (const [userId, data] of challengeMap.entries()) {
-    if (now - data.createdAt > 5 * 60 * 1000) {
-      challengeMap.delete(userId);
-    }
+  for (const [userId, entries] of challengeMap.entries()) {
+    const fresh = (entries || []).filter((entry) => now - entry.createdAt <= CHALLENGE_TTL_MS);
+    if (fresh.length > 0) challengeMap.set(userId, fresh);
+    else challengeMap.delete(userId);
   }
 }, 10 * 60 * 1000);
 
@@ -217,7 +264,7 @@ router.post("/register/options", async (req, res) => {
     logWebAuthnError("error generating registration options", err);
     return res.status(500).json({ error: 'Error interno del servidor' });
   }
-  challengeMap.set(numero_identificacion, { challenge: registrationOptions.challenge, createdAt: Date.now() });
+  addChallenge(numero_identificacion, registrationOptions.challenge);
   res.json(registrationOptions);
 });
 
@@ -234,15 +281,15 @@ router.post("/register/verify", async (req, res) => {
     return res.status(400).json({ error: "Faltan datos" });
   }
 
-  const sanitizedResponse = {
-    ...attestationResponse,
-    id: ensureBase64url(attestationResponse.id),
-    rawId: ensureBase64url(attestationResponse.rawId)
-  };
+  const sanitizedResponse = sanitizeWebAuthnCredentialResponse(attestationResponse);
 
   const db = global.db;
-  const challengeEntry = challengeMap.get(numero_identificacion);
-  const expectedChallenge = challengeEntry ? challengeEntry.challenge : undefined;
+  const clientChallenge = sanitizedResponse?.response?.clientDataJSON
+    ? JSON.parse(Buffer.from(sanitizedResponse.response.clientDataJSON, "base64url").toString("utf8"))?.challenge
+    : undefined;
+  const expectedChallenge = clientChallenge
+    ? getExpectedChallenge(numero_identificacion, clientChallenge)
+    : null;
   if (!expectedChallenge) {
     return res.status(400).json({ error: "No hay challenge para este usuario" });
   }
@@ -281,7 +328,7 @@ router.post("/register/verify", async (req, res) => {
     logWebAuthnError("error storing registration credential", err);
     return res.status(500).json({ error: 'Error interno del servidor' });
   }
-  challengeMap.delete(numero_identificacion);
+  consumeChallenge(numero_identificacion, expectedChallenge);
   debugWebAuthn("registration credential stored");
   res.json({ success: true });
 });
@@ -336,7 +383,7 @@ router.post("/authenticate/options", async (req, res) => {
     logWebAuthnError("error generating authentication options", err);
     return res.status(500).json({ error: 'Error interno del servidor' });
   }
-  challengeMap.set(numero_identificacion, { challenge: authenticationOptions.challenge, createdAt: Date.now() });
+  addChallenge(numero_identificacion, authenticationOptions.challenge);
   res.json(authenticationOptions);
 });
 
@@ -353,11 +400,7 @@ router.post("/authenticate/verify", async (req, res) => {
   if (!numero_identificacion || !assertionResponse) {
     return res.status(400).json({ error: "Faltan datos" });
   }
-  const sanitizedAssertionResponse = {
-    ...assertionResponse,
-    id: ensureBase64url(assertionResponse.id),
-    rawId: ensureBase64url(assertionResponse.rawId)
-  };
+  const sanitizedAssertionResponse = sanitizeWebAuthnCredentialResponse(assertionResponse);
   const db = global.db;
   const worker = await getWorkerAuthCandidate(numero_identificacion, db);
   if (!worker) {
@@ -370,8 +413,12 @@ router.post("/authenticate/verify", async (req, res) => {
   if (!credenciales.length) {
     return res.status(404).json({ error: "No hay credenciales para este usuario" });
   }
-  const authChallengeEntry = challengeMap.get(numero_identificacion);
-  const expectedChallenge = authChallengeEntry ? authChallengeEntry.challenge : undefined;
+  const clientChallenge = sanitizedAssertionResponse?.response?.clientDataJSON
+    ? JSON.parse(Buffer.from(sanitizedAssertionResponse.response.clientDataJSON, "base64url").toString("utf8"))?.challenge
+    : undefined;
+  const expectedChallenge = clientChallenge
+    ? getExpectedChallenge(numero_identificacion, clientChallenge)
+    : null;
   if (!expectedChallenge) {
     return res.status(400).json({ error: "No hay challenge para este usuario" });
   }
@@ -413,7 +460,7 @@ router.post("/authenticate/verify", async (req, res) => {
     request: req
   });
   writeAuthCookies(res, authConfig, sessionResult);
-  challengeMap.delete(numero_identificacion);
+  consumeChallenge(numero_identificacion, expectedChallenge);
   res.json({
     success: true,
     authenticated: true,
