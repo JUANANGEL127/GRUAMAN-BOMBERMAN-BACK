@@ -47,6 +47,13 @@ function ensureBase64url(str) {
   return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+function decodeBase64Flexible(value) {
+  if (!value) return null;
+  const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  return Buffer.from(padded, "base64");
+}
+
 function sanitizeWebAuthnCredentialResponse(response) {
   if (!response) return response;
   return {
@@ -436,7 +443,7 @@ router.post("/authenticate/verify", async (req, res) => {
       expectedRPID: rpID,
       credential: {
         id: credential.credential_id,
-        publicKey: Buffer.from(credential.public_key, "base64"),
+        publicKey: decodeBase64Flexible(credential.public_key),
         counter: credential.sign_count,
         transports: ["internal"]
       }
