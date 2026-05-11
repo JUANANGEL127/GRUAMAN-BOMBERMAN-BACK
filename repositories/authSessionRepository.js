@@ -82,16 +82,18 @@ export function createAuthSessionRepository({ db }) {
       return mapSessionRow(result.rows[0]);
     },
 
-    async rotateRefresh(jti, refreshTokenHash, expiresAt) {
+    async rotateRefresh(jti, currentRefreshTokenHash, nextRefreshTokenHash, expiresAt) {
       const result = await db.query(
         `UPDATE auth_sessions
          SET refresh_token_hash = $2,
              expires_at = $3,
              last_seen_at = NOW(),
              updated_at = NOW()
-         WHERE id = $1 AND revoked_at IS NULL
+         WHERE id = $1
+           AND revoked_at IS NULL
+           AND refresh_token_hash = $4
          RETURNING *`,
-        [jti, refreshTokenHash, expiresAt]
+        [jti, nextRefreshTokenHash, expiresAt, currentRefreshTokenHash]
       );
       return mapSessionRow(result.rows[0]);
     },

@@ -222,7 +222,8 @@ export function createAuthSessionService({ db, sessionRepository, authConfig }) 
       if (!refreshToken) {
         throw createAuthError(AUTH_ERROR_CODES.TOKEN_MISSING);
       }
-      const session = await sessionRepository.findByRefreshHash(hashRefreshToken(refreshToken));
+      const currentRefreshTokenHash = hashRefreshToken(refreshToken);
+      const session = await sessionRepository.findByRefreshHash(currentRefreshTokenHash);
       if (!session) {
         throw createAuthError(AUTH_ERROR_CODES.TOKEN_INVALID);
       }
@@ -239,6 +240,7 @@ export function createAuthSessionService({ db, sessionRepository, authConfig }) 
       const refreshExpiresAt = addSeconds(new Date(), authConfig.refresh.ttlSeconds);
       const rotatedSession = await sessionRepository.rotateRefresh(
         session.id,
+        currentRefreshTokenHash,
         hashRefreshToken(nextRefreshToken),
         refreshExpiresAt
       );
