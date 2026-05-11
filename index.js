@@ -58,6 +58,32 @@ import { writeAuthCookies } from "./helpers/authCookies.js";
 
 import dotenv from "dotenv";
 import { log } from "console";
+
+function normalizePushEndpoint(subscription) {
+  if (!subscription || typeof subscription !== "object" || Array.isArray(subscription)) {
+    return null;
+  }
+  const endpoint = subscription.endpoint;
+  if (typeof endpoint !== "string") return null;
+  const normalized = endpoint.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isTerminalPushError(error) {
+  const statusCode = Number(error?.statusCode || error?.status || 0);
+  const body = String(error?.body || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    statusCode === 404 ||
+    statusCode === 410 ||
+    body.includes("unsubscribed") ||
+    body.includes("expired") ||
+    body.includes("revoked") ||
+    message.includes("unsubscribed") ||
+    message.includes("expired") ||
+    message.includes("revoked")
+  );
+}
 if (process.env.NODE_ENV === "production") {
   dotenv.config({ path: ".env" });
 } else {
@@ -508,11 +534,44 @@ app.use('/auth', createAuthSessionRouter({ authSessionController, csrfProtection
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS push_subscriptions (
-      trabajador_id INT PRIMARY KEY,
+      id SERIAL PRIMARY KEY,
+      trabajador_id INT NOT NULL,
+      endpoint TEXT NOT NULL,
       subscription JSONB NOT NULL,
+      creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      fecha_suscripcion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (trabajador_id) REFERENCES trabajadores(id) ON DELETE CASCADE
     );
   `);
+
+  await pool.query(`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS endpoint TEXT`).catch(() => {});
+  await pool.query(`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP`).catch(() => {});
+  await pool.query(`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS fecha_suscripcion TIMESTAMP DEFAULT CURRENT_TIMESTAMP`).catch(() => {});
+  await pool.query(`ALTER TABLE push_subscriptions ALTER COLUMN trabajador_id SET NOT NULL`).catch(() => {});
+
+  await pool.query(`
+    UPDATE push_subscriptions
+    SET endpoint = NULLIF(TRIM(subscription->>'endpoint'), '')
+    WHERE endpoint IS NULL
+  `).catch(() => {});
+
+  await pool.query(`DELETE FROM push_subscriptions WHERE endpoint IS NULL`).catch(() => {});
+
+  await pool.query(`
+    DELETE FROM push_subscriptions ps
+    USING push_subscriptions dup
+    WHERE ps.id < dup.id
+      AND ps.trabajador_id = dup.trabajador_id
+      AND COALESCE(ps.endpoint, '') = COALESCE(dup.endpoint, '')
+      AND COALESCE(ps.endpoint, '') <> ''
+  `).catch(() => {});
+
+  await pool.query(`ALTER TABLE push_subscriptions ALTER COLUMN endpoint SET NOT NULL`).catch(() => {});
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_push_subscriptions_worker_endpoint
+    ON push_subscriptions (trabajador_id, endpoint)
+  `).catch(() => {});
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cron_locks (
@@ -526,11 +585,26 @@ app.use('/auth', createAuthSessionRouter({ authSessionController, csrfProtection
       id BIGSERIAL PRIMARY KEY,
       job_key VARCHAR(100) NOT NULL,
       trabajador_id INT NOT NULL REFERENCES trabajadores(id) ON DELETE CASCADE,
+      subscription_id INT REFERENCES push_subscriptions(id) ON DELETE CASCADE,
+      endpoint TEXT,
+      status VARCHAR(20) NOT NULL DEFAULT 'sent',
+      provider_status_code INT,
       window_key VARCHAR(30) NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (job_key, trabajador_id, window_key)
+      UNIQUE (job_key, subscription_id, window_key)
     );
   `);
+
+  await pool.query(`ALTER TABLE push_notification_dispatches ADD COLUMN IF NOT EXISTS subscription_id INT REFERENCES push_subscriptions(id) ON DELETE CASCADE`).catch(() => {});
+  await pool.query(`ALTER TABLE push_notification_dispatches ADD COLUMN IF NOT EXISTS endpoint TEXT`).catch(() => {});
+  await pool.query(`ALTER TABLE push_notification_dispatches ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'sent'`).catch(() => {});
+  await pool.query(`ALTER TABLE push_notification_dispatches ADD COLUMN IF NOT EXISTS provider_status_code INT`).catch(() => {});
+  await pool.query(`ALTER TABLE push_notification_dispatches DROP CONSTRAINT IF EXISTS push_notification_dispatches_job_key_trabajador_id_window_k_key`).catch(() => {});
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_push_dispatch_job_subscription_window
+    ON push_notification_dispatches (job_key, subscription_id, window_key)
+    WHERE subscription_id IS NOT NULL
+  `).catch(() => {});
 
   await pool.query(`DELETE FROM cron_locks WHERE created_at < NOW() - INTERVAL '1 day'`).catch(() => {});
   await pool.query(`DELETE FROM push_notification_dispatches WHERE created_at < NOW() - INTERVAL '7 days'`).catch(() => {});
@@ -748,25 +822,41 @@ app.post("/push/test", authenticateSession, requireAdminRead, csrfProtection, as
   }
   try {
     const workerRes = await pool.query(
-      `SELECT ps.subscription FROM trabajadores t JOIN push_subscriptions ps ON ps.trabajador_id = t.id WHERE t.numero_identificacion = $1`,
+      `SELECT DISTINCT ON (ps.endpoint)
+         ps.id,
+         ps.endpoint,
+         ps.subscription
+       FROM trabajadores t
+       JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+       WHERE t.numero_identificacion = $1
+         AND COALESCE(ps.endpoint, '') <> ''
+       ORDER BY ps.endpoint, COALESCE(ps.fecha_suscripcion, ps.creado, NOW()) DESC, ps.id DESC`,
       [String(numero_identificacion)]
     );
     if (workerRes.rows.length === 0) {
       return res.status(404).json({ error: "Suscripción no encontrada para ese trabajador" });
     }
-    const subscription = workerRes.rows[0].subscription;
-    try {
-      await sendPushNotification(subscription, {
-        title,
-        body,
-        icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
-        url: "/"
-      });
-      return res.json({ success: true, message: "Notificación enviada" });
-    } catch (err) {
-      console.error("Error enviando notificación de prueba:", err);
-      return res.status(500).json({ error: "Error enviando notificación", detalle: err.message });
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const row of workerRes.rows) {
+      try {
+        await sendPushNotification(row.subscription, {
+          title,
+          body,
+          icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
+          url: "/"
+        });
+        sent += 1;
+      } catch (err) {
+        failed += 1;
+        if (isTerminalPushError(err)) {
+          await pool.query(`DELETE FROM push_subscriptions WHERE id = $1`, [row.id]).catch(() => {});
+        }
+      }
     }
+    return res.json({ success: true, sent, failed, total: workerRes.rows.length });
   } catch (error) {
     console.error("Error en /push/test:", error);
     return res.status(500).json({ error: "Error interno", detalle: error.message });
@@ -1123,7 +1213,7 @@ app.post("/admin/login", async (req, res) => {
  * Registra o actualiza una suscripción Web Push para un trabajador identificado por
  * numero_identificacion. Acepta la suscripción como objeto JSON o como cadena JSON serializada.
  * @body {{ numero_identificacion: string, subscription: object|string }}
- * @returns {{ success: boolean, action: 'inserted'|'updated' }}
+ * @returns {{ success: boolean, action: 'upserted', subscriptionId: number|null }}
  */
 app.post("/push/subscribe", authenticateSession, requireBodyWorkerSelfOrAdmin, csrfProtection, async (req, res) => {
   const { numero_identificacion, subscription } = req.body;
@@ -1148,6 +1238,10 @@ app.post("/push/subscribe", authenticateSession, requireBodyWorkerSelfOrAdmin, c
   if (typeof subscriptionObj !== "object" || Array.isArray(subscriptionObj)) {
     return res.status(400).json({ error: "Formato de subscription inválido" });
   }
+  const endpoint = normalizePushEndpoint(subscriptionObj);
+  if (!endpoint) {
+    return res.status(400).json({ error: "subscription.endpoint es obligatorio" });
+  }
 
   try {
     console.log("POST /push/subscribe payload:", { numero_identificacion, subscription: subscriptionObj });
@@ -1161,29 +1255,17 @@ app.post("/push/subscribe", authenticateSession, requireBodyWorkerSelfOrAdmin, c
     }
     const trabajador_id = workerRes.rows[0].id;
 
-    try {
-      await pool.query(
-        `INSERT INTO push_subscriptions (trabajador_id, subscription) VALUES ($1, $2)`,
-        [trabajador_id, subscriptionObj]
-      );
-      return res.json({ success: true, action: "inserted" });
-    } catch (insertErr) {
-      if (insertErr.code === "23505") {
-        try {
-          await pool.query(
-            `UPDATE push_subscriptions SET subscription = $1, fecha_suscripcion = COALESCE(fecha_suscripcion, CURRENT_TIMESTAMP) WHERE trabajador_id = $2`,
-            [subscriptionObj, trabajador_id]
-          );
-          return res.json({ success: true, action: "updated" });
-        } catch (updateErr) {
-          console.error("Error actualizando suscripción:", updateErr);
-          return res.status(500).json({ error: "Error actualizando suscripción", detalle: updateErr.message });
-        }
-      } else {
-        console.error("Error insertando suscripción:", insertErr);
-        return res.status(500).json({ error: "Error guardando suscripción", detalle: insertErr.message });
-      }
-    }
+    const upsertResult = await pool.query(
+      `INSERT INTO push_subscriptions (trabajador_id, endpoint, subscription, fecha_suscripcion)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+       ON CONFLICT (trabajador_id, endpoint)
+       DO UPDATE
+          SET subscription = EXCLUDED.subscription,
+              fecha_suscripcion = CURRENT_TIMESTAMP
+       RETURNING id`,
+      [trabajador_id, endpoint, subscriptionObj]
+    );
+    return res.json({ success: true, action: "upserted", subscriptionId: upsertResult.rows[0]?.id || null });
   } catch (error) {
     console.error("Error en /push/subscribe:", error);
     res.status(500).json({ error: "Error guardando suscripción", detalle: error.message });
@@ -1197,7 +1279,7 @@ app.post("/push/subscribe", authenticateSession, requireBodyWorkerSelfOrAdmin, c
  */
 app.get("/push/subscribe/schema", (req, res) => {
   res.json({
-    description: "POST /push/subscribe espera JSON con numero_identificacion y subscription.",
+    description: "POST /push/subscribe espera JSON con numero_identificacion y subscription. Hace upsert por (trabajador_id, endpoint).",
     contentType: "application/json",
     bodyExample: {
       numero_identificacion: "12345678",
@@ -1269,13 +1351,13 @@ async function getCurrentPushWindowKey() {
   return result.rows[0]?.window_key || new Date().toISOString().slice(0, 13);
 }
 
-async function registerPushDispatch(jobKey, trabajadorId, windowKey) {
+async function registerPushDispatch({ jobKey, trabajadorId, subscriptionId, endpoint, windowKey }) {
   const result = await pool.query(
-    `INSERT INTO push_notification_dispatches (job_key, trabajador_id, window_key)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (job_key, trabajador_id, window_key) DO NOTHING
+    `INSERT INTO push_notification_dispatches (job_key, trabajador_id, subscription_id, endpoint, window_key, status)
+     VALUES ($1, $2, $3, $4, $5, 'sent')
+     ON CONFLICT (job_key, subscription_id, window_key) DO NOTHING
      RETURNING id`,
-    [jobKey, trabajadorId, windowKey]
+    [jobKey, trabajadorId, subscriptionId, endpoint, windowKey]
   );
   return result.rowCount === 1;
 }
@@ -1287,17 +1369,30 @@ async function runPushCronJob({ jobKey, title, body, errorLabel }) {
   }
 
   const result = await pool.query(`
-    SELECT t.id, t.nombre, ps.subscription
+    SELECT DISTINCT ON (ps.endpoint, ps.trabajador_id)
+      t.id,
+      t.nombre,
+      ps.id AS subscription_id,
+      ps.endpoint,
+      ps.subscription
     FROM trabajadores t
     JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+    WHERE COALESCE(ps.endpoint, '') <> ''
+    ORDER BY ps.endpoint, ps.trabajador_id, COALESCE(ps.fecha_suscripcion, ps.creado, NOW()) DESC, ps.id DESC
   `);
   const windowKey = await getCurrentPushWindowKey();
 
   for (const row of result.rows) {
     try {
-      const canSend = await registerPushDispatch(jobKey, row.id, windowKey);
+      const canSend = await registerPushDispatch({
+        jobKey,
+        trabajadorId: row.id,
+        subscriptionId: row.subscription_id,
+        endpoint: row.endpoint,
+        windowKey
+      });
       if (!canSend) {
-        console.log(`[push-cron:${jobKey}] skipped duplicate for worker ${row.id} window ${windowKey}`);
+        console.log(`[push-cron:${jobKey}] skipped duplicate for worker ${row.id} subscription ${row.subscription_id} window ${windowKey}`);
         continue;
       }
 
@@ -1307,8 +1402,11 @@ async function runPushCronJob({ jobKey, title, body, errorLabel }) {
         icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
         url: "/"
       });
-      console.log(`[push-cron:${jobKey}] sent to worker ${row.id} window ${windowKey}`);
+      console.log(`[push-cron:${jobKey}] sent to worker ${row.id} subscription ${row.subscription_id} window ${windowKey}`);
     } catch (err) {
+      if (isTerminalPushError(err)) {
+        await pool.query(`DELETE FROM push_subscriptions WHERE id = $1`, [row.subscription_id]).catch(() => {});
+      }
       console.error(`${errorLabel} worker ${row.id}:`, err);
     }
   }
@@ -1424,9 +1522,16 @@ cron.schedule('0 16 * * 1,2,3,4,5,6', async () => {
     const windowKey = await getCurrentPushWindowKey();
 
     const trabajadores = await pool.query(`
-      SELECT t.id, t.nombre, ps.subscription
+      SELECT DISTINCT ON (ps.endpoint, ps.trabajador_id)
+        t.id,
+        t.nombre,
+        ps.id AS subscription_id,
+        ps.endpoint,
+        ps.subscription
       FROM trabajadores t
       JOIN push_subscriptions ps ON ps.trabajador_id = t.id
+      WHERE COALESCE(ps.endpoint, '') <> ''
+      ORDER BY ps.endpoint, ps.trabajador_id, COALESCE(ps.fecha_suscripcion, ps.creado, NOW()) DESC, ps.id DESC
     `);
 
     for (const row of trabajadores.rows) {
@@ -1452,9 +1557,15 @@ cron.schedule('0 16 * * 1,2,3,4,5,6', async () => {
 
       if (faltantes.length > 0) {
         try {
-          const canSend = await registerPushDispatch('faltantes_1600', row.id, windowKey);
+          const canSend = await registerPushDispatch({
+            jobKey: 'faltantes_1600',
+            trabajadorId: row.id,
+            subscriptionId: row.subscription_id,
+            endpoint: row.endpoint,
+            windowKey
+          });
           if (!canSend) {
-            console.log(`[push-cron:faltantes_1600] skipped duplicate for worker ${row.id} window ${windowKey}`);
+            console.log(`[push-cron:faltantes_1600] skipped duplicate for worker ${row.id} subscription ${row.subscription_id} window ${windowKey}`);
             continue;
           }
           await sendPushNotification(row.subscription, {
@@ -1463,8 +1574,11 @@ cron.schedule('0 16 * * 1,2,3,4,5,6', async () => {
             icon: "https://gruaman-bomberman-front.onrender.com/icon-192.png",
             url: "/"
           });
-          console.log(`[push-cron:faltantes_1600] sent to worker ${row.id} window ${windowKey}`);
+          console.log(`[push-cron:faltantes_1600] sent to worker ${row.id} subscription ${row.subscription_id} window ${windowKey}`);
         } catch (err) {
+          if (isTerminalPushError(err)) {
+            await pool.query(`DELETE FROM push_subscriptions WHERE id = $1`, [row.subscription_id]).catch(() => {});
+          }
           console.error(`Error enviando notificación 4:00pm worker ${row.id}:`, err);
         }
       }
