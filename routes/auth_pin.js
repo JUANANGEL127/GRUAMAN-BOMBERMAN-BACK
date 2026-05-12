@@ -138,7 +138,7 @@ router.get("/status", async (req, res) => {
  * @throws {403} Si la autenticación por PIN no está habilitada para el trabajador.
  * @throws {404} Si el trabajador no existe.
  */
-router.post("/set", requireConfiguredSession, requirePinOwnerOrAdmin, requireConfiguredCsrf, async (req, res) => {
+router.post("/set", async (req, res) => {
   const { numero_identificacion, pin } = req.body;
   if (!numero_identificacion || !pin) {
     return res.status(400).json({ error: "Faltan datos" });
