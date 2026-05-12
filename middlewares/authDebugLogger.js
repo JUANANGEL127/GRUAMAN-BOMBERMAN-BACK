@@ -10,6 +10,14 @@ function isEnabled(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
 }
 
+function parseSetCookieNames(setCookieHeader) {
+  if (!setCookieHeader) return [];
+  const entries = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
+  return entries
+    .map((entry) => String(entry).split(";")[0]?.split("=")[0]?.trim())
+    .filter(Boolean);
+}
+
 function parseDebugPaths(value) {
   return String(value || "")
     .split(",")
@@ -53,10 +61,12 @@ export function createAuthDebugLogger({
     console.info("[AUTH_DEBUG][request]", requestInfo);
 
     res.on("finish", () => {
+      const setCookieNames = parseSetCookieNames(res.getHeader("set-cookie"));
       console.info("[AUTH_DEBUG][response]", {
         method: req.method,
         path: req.originalUrl,
-        statusCode: res.statusCode
+        statusCode: res.statusCode,
+        setCookieNames
       });
     });
 
