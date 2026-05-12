@@ -10,6 +10,13 @@ function isEnabled(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
 }
 
+function parseDebugPaths(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function matchesDebugPath(pathname, paths) {
   return paths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
@@ -20,7 +27,9 @@ export function isAuthDebugEnabled(env = process.env) {
 
 export function createAuthDebugLogger({
   enabled = isAuthDebugEnabled(),
-  paths = ["/horas_jornada", "/obras"]
+  paths = parseDebugPaths(process.env.AUTH_DEBUG_PATHS).length
+    ? parseDebugPaths(process.env.AUTH_DEBUG_PATHS)
+    : ["/horas_jornada", "/obras", "/auth", "/webauthn"]
 } = {}) {
   return function authDebugLogger(req, res, next) {
     if (!enabled || !matchesDebugPath(req.path, paths)) {
