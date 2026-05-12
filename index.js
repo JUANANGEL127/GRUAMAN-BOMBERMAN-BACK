@@ -1412,7 +1412,7 @@ async function runPushCronJob({ jobKey, title, body, errorLabel }) {
   }
 }
 
-cron.schedule('0 0 * * *', async () => {
+cron.schedule('0 0 * * 0,2,3,4,5,6', async () => {
   await ejecutarConLock('indicador_central_diario_0000', async () => {
     try {
       await runIndicadorCentralCutoff({
