@@ -46,10 +46,11 @@ export function createAuthConfig(env = process.env) {
   const sameSite = normalizeSameSite(env.AUTH_COOKIE_SAMESITE || "lax");
   const csrfEnabled = parseBoolean(env.AUTH_CSRF_ENABLED, false);
   const allowLocalhostCors = parseBoolean(env.CORS_ALLOW_LOCALHOST, !isProduction);
+  const fallbackOrigins = isProduction ? [] : [DEFAULT_FRONTEND_URL];
   const configuredCorsOrigins = unique([
     ...parseCsvList(env.CORS_ALLOWED_ORIGINS),
     env.FRONTEND_URL || DEFAULT_FRONTEND_URL,
-    DEFAULT_FRONTEND_URL
+    ...fallbackOrigins
   ]).filter((origin) => allowLocalhostCors || !isLocalhostOrigin(origin));
 
   if (sameSite === "none" && !secureCookies) {
