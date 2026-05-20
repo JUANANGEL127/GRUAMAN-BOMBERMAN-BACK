@@ -122,6 +122,38 @@ const { Pool } = pkg;
 const app = express();
 const authConfig = createAuthConfig();
 
+const DB_POOL_MAX = Number(process.env.DB_POOL_MAX || 20);
+const DB_IDLE_TIMEOUT_MS = Number(process.env.DB_IDLE_TIMEOUT_MS || 30000);
+const DB_CONNECTION_TIMEOUT_MS = Number(process.env.DB_CONNECTION_TIMEOUT_MS || 10000);
+const DB_QUERY_TIMEOUT_MS = Number(process.env.DB_QUERY_TIMEOUT_MS || 60000);
+const DB_STATEMENT_TIMEOUT_MS = Number(process.env.DB_STATEMENT_TIMEOUT_MS || 60000);
+
+function isTransientDbError(error) {
+  if (!error) return false;
+  const message = String(error.message || "").toLowerCase();
+  const code = String(error.code || "");
+  return (
+    code === "57P01" || // admin_shutdown
+    code === "57P02" || // crash_shutdown
+    code === "57P03" || // cannot_connect_now
+    code === "08000" ||
+    code === "08001" ||
+    code === "08003" ||
+    code === "08006" ||
+    code === "53300" || // too_many_connections
+    message.includes("connection terminated unexpectedly") ||
+    message.includes("connection terminated") ||
+    message.includes("econnreset") ||
+    message.includes("socket hang up")
+  );
+}
+
+function isReadOnlyQuery(queryText) {
+  if (typeof queryText !== "string") return false;
+  const normalized = queryText.trim().toLowerCase();
+  return normalized.startsWith("select") || normalized.startsWith("with");
+}
+
 // Credentialed CORS must use exact origins. Localhost is allowed by default only outside production.
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true;
@@ -149,7 +181,13 @@ app.use('/auth/pin', authPinRouter);
 const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false }
+      ssl: { rejectUnauthorized: false },
+      max: DB_POOL_MAX,
+      idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
+      connectionTimeoutMillis: DB_CONNECTION_TIMEOUT_MS,
+      query_timeout: DB_QUERY_TIMEOUT_MS,
+      statement_timeout: DB_STATEMENT_TIMEOUT_MS,
+      keepAlive: true
     })
   : new Pool({
       host: process.env.PGHOST || "localhost",
@@ -157,7 +195,64 @@ const pool = process.env.DATABASE_URL
       password: process.env.PGPASSWORD || "",
       database: process.env.PGDATABASE || "postgres",
       port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
+      max: DB_POOL_MAX,
+      idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
+      connectionTimeoutMillis: DB_CONNECTION_TIMEOUT_MS,
+      query_timeout: DB_QUERY_TIMEOUT_MS,
+      statement_timeout: DB_STATEMENT_TIMEOUT_MS,
+      keepAlive: true
     });
+
+const originalPoolQuery = pool.query.bind(pool);
+pool.query = async (...args) => {
+  const [text] = args;
+  const startedAt = Date.now();
+  try {
+    const result = await originalPoolQuery(...args);
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= 2000) {
+      console.warn(`[DB][slow-query] ${elapsed}ms`);
+    }
+    return result;
+  } catch (error) {
+    const elapsed = Date.now() - startedAt;
+    const shouldRetry = isReadOnlyQuery(text) && isTransientDbError(error);
+    if (shouldRetry) {
+      console.warn(`[DB][retry] transient read query failure after ${elapsed}ms: ${error.code || "NO_CODE"} ${error.message}`);
+      return originalPoolQuery(...args);
+    }
+    throw error;
+  }
+};
+
+pool.on("error", (error) => {
+  console.error("[DB][pool-error] Unexpected error on idle PostgreSQL client:", {
+    code: error?.code || null,
+    message: error?.message || "unknown error"
+  });
+});
+
+let isShuttingDown = false;
+async function shutdownServer(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.warn(`[APP] Received ${signal}. Closing PostgreSQL pool...`);
+  try {
+    await pool.end();
+    console.warn("[APP] PostgreSQL pool closed gracefully.");
+    process.exit(0);
+  } catch (error) {
+    console.error("[APP] Error while closing PostgreSQL pool:", error);
+    process.exit(1);
+  }
+}
+
+process.on("SIGTERM", () => {
+  shutdownServer("SIGTERM");
+});
+process.on("SIGINT", () => {
+  shutdownServer("SIGINT");
+});
 
 global.db = pool;
 
