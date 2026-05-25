@@ -42,6 +42,7 @@ import indicadorCentralRouter from './routes/administrador/indicador_central.js'
 import authPinRouter, { configureAuthPinSession } from './routes/auth_pin.js';
 import pqrRouter from './routes/sst/pqr.js';
 import empresaRouter from './routes/empresa/empresa.js'
+import formatosObligatoriosRouter from "./routes/formatos_obligatorios.js";
 import { getIndicadorCentralDefaultConfig, runIndicadorCentralCutoff } from './helpers/indicador_central.js';
 import { createAuthConfig, isLocalhostOrigin } from "./config/authConfig.js";
 import { createAuthSessionController } from "./controllers/authSessionController.js";
@@ -896,6 +897,25 @@ app.use('/auth', createAuthSessionRouter({ authSessionController, csrfProtection
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_ats_tipo    ON ats (tipo_ats)`).catch(() => {});
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_ats_empresa ON ats (empresa_id)`).catch(() => {});
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_ats_fecha   ON ats (fecha_elaboracion)`).catch(() => {});
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_trabajadores_ident_scope
+    ON trabajadores (numero_identificacion, obra_id, empresa_id)
+    WHERE numero_identificacion IS NOT NULL
+  `).catch(() => {});
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_horas_jornada_ingreso_lookup
+    ON horas_jornada (nombre_operador, empresa_id, fecha_servicio, id DESC)
+    WHERE hora_ingreso IS NOT NULL
+  `).catch(() => {});
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_horas_jornada_salida_lookup
+    ON horas_jornada (nombre_operador, empresa_id, fecha_servicio, id DESC)
+    WHERE hora_salida IS NOT NULL
+  `).catch(() => {});
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_permiso_trabajo_lookup
+    ON permiso_trabajo (nombre_operador, fecha_servicio, id DESC)
+  `).catch(() => {});
 
   const { default: adminHorasExtraRouter } = await import("./routes/administrador/admin_horas_extra.js");
   app.use("/administrador/admin_horas_extra", authenticateSession, requireAdminRead, csrfProtection, adminHorasExtraRouter);
@@ -992,6 +1012,7 @@ app.use("/bomberman/herramientas_mantenimiento", authenticateSession, requireAut
 app.use("/bomberman/kit_limpieza", authenticateSession, requireAuthenticatedActor, csrfProtection, kitLimpiezaRouter);
 app.use("/sst/pqr", authenticateSession, requireAuthenticatedActor, csrfProtection, pqrRouter);
 app.use("/roles/empresas",empresaRouter);
+app.use("/formatos_obligatorios", authenticateSession, requireAuthenticatedActor, csrfProtection, formatosObligatoriosRouter);
 
 // /horas_jornada se monta dentro del IIFE de inicio
 

@@ -1,0 +1,41 @@
+﻿{
+  "success_mixed_completion": {
+    "request": {
+      "cedula_trabajador": "1020304050",
+      "obra_id": 42,
+      "empresa_id": 7,
+      "fecha_servicio": "2026-05-22"
+    },
+    "response": {
+      "hora_ingreso": { "completado": true, "id": 991, "fecha_registro": "2026-05-22T05:00:00Z" },
+      "permiso_trabajo": { "completado": false },
+      "hora_salida": { "completado": true, "id": 1004, "fecha_registro": "2026-05-22T05:00:00Z" }
+    }
+  },
+  "no_records": {
+    "request": {
+      "cedula_trabajador": "1020304050",
+      "obra_id": 42,
+      "empresa_id": 7,
+      "fecha_servicio": "2026-05-22"
+    },
+    "response": {
+      "hora_ingreso": { "completado": false },
+      "permiso_trabajo": { "completado": false },
+      "hora_salida": { "completado": false }
+    }
+  },
+  "duplicates_resolved": {
+    "request": {
+      "cedula_trabajador": "1020304050",
+      "obra_id": 42,
+      "empresa_id": 7,
+      "fecha_servicio": "2026-05-22"
+    },
+    "response": {
+      "hora_ingreso": { "completado": true, "id": 1009, "fecha_registro": "2026-05-22T05:00:00Z" },
+      "permiso_trabajo": { "completado": true, "id": 1010, "fecha_registro": "2026-05-22T05:00:00Z" },
+      "hora_salida": { "completado": true, "id": 1015, "fecha_registro": "2026-05-22T05:00:00Z" }
+    }
+  }
+}
