@@ -1,0 +1,47 @@
+﻿openapi: 3.0.3
+info:
+  title: Formatos Obligatorios Estado API
+  version: 2.0.0
+paths:
+  /formatos_obligatorios/estado:
+    get:
+      summary: Estado diario de diligenciamiento por trabajador y obra
+      description: |
+        Consulta en BD el estado de TODOS los formularios operativos (grúas, bombas, líderes, compartidos) por
+        trabajador + obra + fecha del día en America/Bogota.
+      parameters:
+        - in: query
+          name: cedula_trabajador
+          required: true
+          schema: { type: string }
+        - in: query
+          name: empresa_id
+          required: false
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: obra_id
+          required: false
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: nombre_proyecto
+          required: false
+          schema: { type: string }
+          description: Si se envía, tiene prioridad sobre obra_id.
+        - in: query
+          name: fecha_servicio
+          required: false
+          schema: { type: string, format: date }
+        - in: query
+          name: fecha_cliente
+          required: false
+          schema: { type: string }
+          description: ISO/timestamp del cliente; si no llega fecha_servicio, se usa esta.
+      responses:
+        '200':
+          description: Estado por formato.
+        '400':
+          description: Parámetros inválidos.
+        '404':
+          description: Trabajador u obra no encontrada.
+        '500':
+          description: Error interno.
