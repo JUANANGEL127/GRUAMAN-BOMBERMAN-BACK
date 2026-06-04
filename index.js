@@ -54,8 +54,10 @@ import { requirePermission } from "./middlewares/requirePermission.js";
 import { requireRole } from "./middlewares/requireRole.js";
 import { requireWorkerSelfOrAdmin } from "./middlewares/requireWorkerSelfOrAdmin.js";
 import { initializeAuthSessionSchema, createAuthSessionRepository } from "./repositories/authSessionRepository.js";
+import { initializeLocationAuditSchema, createLocationAuditRepository } from "./repositories/locationAuditRepository.js";
 import { createAuthSessionService } from "./services/authSessionService.js";
 import { writeAuthCookies } from "./helpers/authCookies.js";
+import { toFiniteCoordinate } from "./helpers/locationValidation.js";
 
 import dotenv from "dotenv";
 import { log } from "console";
@@ -128,6 +130,8 @@ const DB_IDLE_TIMEOUT_MS = Number(process.env.DB_IDLE_TIMEOUT_MS || 30000);
 const DB_CONNECTION_TIMEOUT_MS = Number(process.env.DB_CONNECTION_TIMEOUT_MS || 10000);
 const DB_QUERY_TIMEOUT_MS = Number(process.env.DB_QUERY_TIMEOUT_MS || 60000);
 const DB_STATEMENT_TIMEOUT_MS = Number(process.env.DB_STATEMENT_TIMEOUT_MS || 60000);
+const ATTENDANCE_GEO_MAX_DISTANCE_METERS = Number(process.env.ATTENDANCE_GEO_MAX_DISTANCE_METERS || 500);
+const ATTENDANCE_GEO_OBRA_BYPASS = process.env.OBRA_BYPASS_NOMBRE || "LA CENTRAL";
 
 function isTransientDbError(error) {
   if (!error) return false;
@@ -258,6 +262,12 @@ process.on("SIGINT", () => {
 global.db = pool;
 
 const authSessionRepository = createAuthSessionRepository({ db: pool });
+const locationAuditRepository = createLocationAuditRepository({
+  db: pool,
+  maxDistanceMeters: ATTENDANCE_GEO_MAX_DISTANCE_METERS,
+  bypassObraName: ATTENDANCE_GEO_OBRA_BYPASS
+});
+global.locationAuditRepository = locationAuditRepository;
 const authSessionService = createAuthSessionService({
   db: pool,
   sessionRepository: authSessionRepository,
@@ -627,6 +637,7 @@ app.use('/auth', createAuthSessionRouter({ authSessionController, csrfProtection
   `);
 
   await initializeAuthSessionSchema(pool);
+  await initializeLocationAuditSchema(pool);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -1177,66 +1188,86 @@ app.get("/bombas", async (req, res) => {
  * POST /validar_ubicacion
  * Valida que una coordenada GPS dada se encuentre dentro de los 500 m de la ubicación registrada de la obra.
  * Las obras que coincidan con la variable de entorno OBRA_BYPASS_NOMBRE omiten la geolocalización por completo.
- * @body {{ obra_id: number, lat: number, lon: number }}
+ * @body {{ obra_id: number, lat: number, lon: number, accuracy_meters?: number }}
  * @returns {{ ok: boolean, message?: string }}
  */
 app.post("/validar_ubicacion", authenticateSession, requireAuthenticatedActor, csrfProtection, async (req, res) => {
-  const { obra_id, lat, lon } = req.body;
-  if (!obra_id || typeof lat !== "number" || typeof lon !== "number") {
+  const { obra_id, lat, lon, accuracy_meters } = req.body;
+  const latitude = toFiniteCoordinate(lat);
+  const longitude = toFiniteCoordinate(lon);
+
+  if (!obra_id || latitude == null || longitude == null) {
     return res.status(400).json({ ok: false, message: "Parámetros inválidos" });
   }
+
+  const sessionId = req.auth?.session?.id || null;
+  const user = req.auth?.user || null;
+  const actorId = user?.id || null;
+  const actorType = user?.actorType || null;
+  const workerId = actorType === "worker" ? Number(user.id) : null;
+  const numericObraId = Number(obra_id);
+
   try {
-    const OBRA_BYPASS = process.env.OBRA_BYPASS_NOMBRE || "LA CENTRAL";
-    const obraCheck = await pool.query(`SELECT nombre_obra FROM obras WHERE id = $1`, [obra_id]);
-    if (obraCheck.rows.length > 0 && obraCheck.rows[0].nombre_obra === OBRA_BYPASS) {
-      return res.json({ ok: true });
+    const validation = await locationAuditRepository.validateCoordinatesAgainstObra({
+      obraId: numericObraId,
+      latitude,
+      longitude
+    });
+
+    await locationAuditRepository.appendAuditLog({
+      sessionId,
+      actorId,
+      actorType,
+      workerId,
+      eventType: "session_location_validation",
+      action: validation.ok ? "allowed" : "denied",
+      message: validation.message,
+      obraId: validation.obra?.id || numericObraId,
+      obraNombre: validation.obra?.nombre || null,
+      latitude,
+      longitude,
+      accuracyMeters: accuracy_meters ?? null,
+      distanceMeters: validation.distanceMeters,
+      withinRange: validation.ok,
+      payload: req.body,
+      request: req
+    });
+
+    if (validation.ok && sessionId && actorId && actorType && validation.obra) {
+      await locationAuditRepository.upsertSessionContext({
+        sessionId,
+        actorId,
+        actorType,
+        workerId,
+        obraId: validation.obra.id,
+        obraNombre: validation.obra.nombre,
+        latitude,
+        longitude,
+        accuracyMeters: accuracy_meters ?? null,
+        distanceMeters: validation.distanceMeters,
+        withinRange: true,
+        validationSource: "validar_ubicacion",
+        request: req
+      });
     }
 
-    const result = await pool.query(`SELECT latitud, longitud FROM obras WHERE id = $1`, [obra_id]);
-    if (result.rows.length === 0 || result.rows[0].latitud == null || result.rows[0].longitud == null) {
+    if (validation.reason === "OBRA_NOT_FOUND" || validation.reason === "OBRA_WITHOUT_COORDINATES") {
       return res.status(404).json({ ok: false, message: "Obra no encontrada o sin coordenadas" });
     }
-    const { latitud, longitud } = result.rows[0];
-    const distancia = getDistanceFromLatLonInMeters(lat, lon, latitud, longitud);
-    if (distancia <= 500) {
+
+    if (validation.ok) {
       res.json({ ok: true });
     } else {
-      res.status(403).json({ ok: false, distancia: Math.round(distancia), message: "No estás en la ubicación de la obra seleccionada" });
+      res.status(403).json({
+        ok: false,
+        distancia: validation.distanceMeters,
+        message: validation.message
+      });
     }
   } catch (error) {
     res.status(500).json({ ok: false, message: "Error al validar ubicación" });
   }
 });
-
-/**
- * Calcula la distancia de gran círculo entre dos puntos geográficos usando la fórmula de Haversine.
- * @param {number} lat1 - Latitud del punto 1 en grados decimales.
- * @param {number} lon1 - Longitud del punto 1 en grados decimales.
- * @param {number} lat2 - Latitud del punto 2 en grados decimales.
- * @param {number} lon2 - Longitud del punto 2 en grados decimales.
- * @returns {number} Distancia en metros.
- */
-function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000;
-  const dLat = deg2rad(lat2 - lat1);
-  const dLon = deg2rad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(deg2rad(lat1)) *
-      Math.cos(deg2rad(lat2)) *
-      Math.sin(dLon / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
-/**
- * Convierte grados a radianes.
- * @param {number} deg
- * @returns {number}
- */
-function deg2rad(deg) {
-  return deg * (Math.PI / 180);
-}
 
 /**
  * GET /datos_basicos
