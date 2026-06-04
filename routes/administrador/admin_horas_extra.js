@@ -32,13 +32,14 @@ function ensureReportTempDir() {
 }
 
 function getReportJobDownloadUrl(jobId) {
-  return `/administrador/admin_horas_extra/pdf-jobs/${jobId}/download`;
+  return `/administrador/admin_horas_extra/report-jobs/${jobId}/download`;
 }
 
 function normalizeReportJobRecord(job) {
   if (!job) return null;
   return {
     jobId: job.jobId,
+    format: job.format || 'pdf',
     status: job.status,
     message: job.message,
     downloadUrl: job.status === 'ready' ? getReportJobDownloadUrl(job.jobId) : null,
@@ -1684,6 +1685,25 @@ function getReportProfileConfig(profileKey) {
       { label: 'Horas Netas', key: 'total_horas_trabajadas' },
       { label: 'Extra Diurna', key: 'total_extra_diurna' },
       { label: 'Extra Nocturna', key: 'total_extra_nocturna' }
+    ],
+    sheetDetailColumns: [
+      { label: 'Nombre Operador', key: 'Nombre Operador' },
+      { label: 'Fecha Servicio', key: 'Fecha Servicio' },
+      { label: 'Hora Ingreso', key: 'Hora Ingreso' },
+      { label: 'Hora Salida', key: 'Hora Salida' },
+      { label: 'Horas Trabajadas', key: 'Horas Trabajadas' },
+      { label: 'Extra Diurna', key: 'Extra Diurna' },
+      { label: 'Extra Nocturna', key: 'Extra Nocturna' },
+      { label: 'Festivo', key: 'Festivo' },
+      { label: 'Cliente', key: 'Cliente' },
+      { label: 'Proyecto', key: 'Proyecto' },
+      { label: 'Sede', key: 'Sede' },
+      { label: 'Rol', key: 'Rol' },
+      { label: 'Tipo de Evento', key: 'Tipo de Evento' },
+      { label: 'Mensaje Auditoría', key: 'Mensaje Auditoría' },
+      { label: 'Distancia Metros', key: 'Distancia Metros' },
+      { label: 'Dentro de Rango', key: 'Dentro de Rango' },
+      { label: 'URL Google Maps', key: 'URL Google Maps' }
     ]
   };
 }
@@ -1904,7 +1924,7 @@ function buildSummaryReportRowByProfile(row, profileKey = 'bomberman') {
   };
 }
 
-function createPdfJobRequest(req) {
+function createReportJobRequest(req, formato = 'pdf') {
   const body = { ...(req?.body || {}) };
   delete body.modo;
   delete body.mode;
@@ -1918,21 +1938,22 @@ function createPdfJobRequest(req) {
     originalUrl: req?.originalUrl,
     body: {
       ...body,
-      formato: 'pdf'
+      formato
     },
     method: 'POST'
   };
 }
 
-async function processHorasExtraPdfJob(jobId, req) {
+async function processHorasExtraReportJob(jobId, req, formato = 'pdf') {
   const job = getReportJob(jobId);
   if (!job) return;
 
   ensureReportTempDir();
-  const filePath = path.join(REPORT_TEMP_DIR, `${jobId}.pdf`);
+  const fileExtension = formato === 'excel' ? 'xlsx' : 'pdf';
+  const filePath = path.join(REPORT_TEMP_DIR, `${jobId}.${fileExtension}`);
   const fileStream = fs.createWriteStream(filePath);
   const responseAdapter = buildReportJobResponseAdapter(fileStream);
-  const requestLike = createPdfJobRequest(req);
+  const requestLike = createReportJobRequest(req, formato);
   const fileFinished = new Promise((resolve, reject) => {
     fileStream.once('finish', resolve);
     fileStream.once('error', reject);
@@ -1940,7 +1961,9 @@ async function processHorasExtraPdfJob(jobId, req) {
 
   updateReportJob(jobId, {
     status: 'processing',
-    message: 'Generando PDF de horas extra...'
+    message: formato === 'excel'
+      ? 'Generando Excel de horas extra...'
+      : 'Generando PDF de horas extra...'
   });
 
   try {
@@ -1948,7 +1971,7 @@ async function processHorasExtraPdfJob(jobId, req) {
 
     if (responseAdapter.__statusCode >= 400 || responseAdapter.__jsonPayload) {
       const payload = responseAdapter.__jsonPayload || {};
-      const message = payload.error || payload.message || 'No se pudo generar el PDF.';
+      const message = payload.error || payload.message || 'No se pudo generar el reporte.';
       finalizeReportJob(jobId, 'error', message, {
         error: payload.error || message,
         filePath
@@ -1960,13 +1983,13 @@ async function processHorasExtraPdfJob(jobId, req) {
 
     await fileFinished;
 
-    finalizeReportJob(jobId, 'ready', 'PDF listo para descargar.', {
+    finalizeReportJob(jobId, 'ready', 'Reporte listo para descargar.', {
       filePath,
-      fileName: 'horas_jornada_compilado.pdf'
+      fileName: `horas_jornada_compilado.${fileExtension}`
     });
   } catch (err) {
-    finalizeReportJob(jobId, 'error', err?.message || 'Error generando el PDF.', {
-      error: err?.message || 'Error generando el PDF.',
+    finalizeReportJob(jobId, 'error', err?.message || 'Error generando el reporte.', {
+      error: err?.message || 'Error generando el reporte.',
       filePath
     });
     try { fileStream.destroy(); } catch (_) { /* no-op */ }
@@ -2708,8 +2731,8 @@ async function handleDescargar(req, res) {
     const profileConfig = getReportProfileConfig(reportProfile);
     const { nombre, obra, constructora, empresa_id, empresa_ids, fecha_inicio, fecha_fin, formato = 'excel', limit = 50000 } = req.body || {};
     const downloadMode = String(req.body?.modo || req.body?.mode || req.body?.async || '').trim().toLowerCase();
-    if (formato === 'pdf' && ['job', 'async', 'background', 'as_job', 'true', '1'].includes(downloadMode)) {
-      return handleStartHorasExtraPdfJob(req, res);
+    if (['pdf', 'excel'].includes(formato) && ['job', 'async', 'background', 'as_job', 'true', '1'].includes(downloadMode)) {
+      return handleStartHorasExtraReportJob(req, res);
     }
     const start = formatDateOnly(fecha_inicio);
     const end = formatDateOnly(fecha_fin) || todayDateString();
@@ -3168,12 +3191,13 @@ async function handleDescargar(req, res) {
   }
 }
 
-async function handleStartHorasExtraPdfJob(req, res) {
+async function handleStartHorasExtraReportJob(req, res) {
   try {
     db = ensureDb();
     const pool = db;
-    const job = createReportJobRecord();
-    const reportProfile = resolveAdminHorasExtraProfile(req);
+    const requestedFormat = String(req.body?.formato || 'pdf').trim().toLowerCase();
+    const formato = requestedFormat === 'excel' ? 'excel' : 'pdf';
+    const job = createReportJobRecord({ format: formato });
     const { nombre, obra, constructora, empresa_id, empresa_ids, fecha_inicio, fecha_fin, limit = 50000 } = req.body || {};
     const start = formatDateOnly(fecha_inicio);
     const end = formatDateOnly(fecha_fin) || todayDateString();
@@ -3207,7 +3231,7 @@ async function handleStartHorasExtraPdfJob(req, res) {
     updateReportJob(job.jobId, {
       status: 'pending',
       message: q.rowCount === 0
-        ? 'No hay registros para generar el PDF.'
+        ? 'No hay registros para generar el reporte.'
         : 'El reporte fue encolado correctamente.'
     });
 
@@ -3216,35 +3240,40 @@ async function handleStartHorasExtraPdfJob(req, res) {
       jobId: job.jobId,
       status: q.rowCount === 0 ? 'error' : 'pending',
       message: q.rowCount === 0
-        ? 'No hay registros para generar el PDF.'
-        : 'El PDF se está generando en segundo plano.',
+        ? 'No hay registros para generar el reporte.'
+        : `El ${formato === 'excel' ? 'Excel' : 'PDF'} se está generando en segundo plano.`,
       downloadUrl: null,
-      statusUrl: `/administrador/admin_horas_extra/pdf-jobs/${job.jobId}`,
-      pdfRequestedAt: new Date().toISOString()
+      statusUrl: `/administrador/admin_horas_extra/report-jobs/${job.jobId}`,
+      requestedAt: new Date().toISOString(),
+      format: formato
     });
-
     if (q.rowCount === 0) {
-      finalizeReportJob(job.jobId, 'error', 'No hay registros para generar el PDF.');
+      finalizeReportJob(job.jobId, 'error', 'No hay registros para generar el reporte.');
       return;
     }
 
     const requestLike = {
-      ...req,
+      auth: req?.auth,
+      query: { ...(req?.query || {}) },
+      headers: { ...(req?.headers || {}) },
+      baseUrl: req?.baseUrl,
+      originalUrl: req?.originalUrl,
       body: {
         ...(req.body || {}),
-        formato: 'pdf'
+        formato
       }
     };
     setImmediate(() => {
-      void processHorasExtraPdfJob(job.jobId, requestLike);
+      void processHorasExtraReportJob(job.jobId, requestLike, formato);
     });
   } catch (err) {
+
     console.error('Error iniciando job de horas extra:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 }
 
-async function handleGetHorasExtraPdfJob(req, res) {
+async function handleGetHorasExtraReportJob(req, res) {
   try {
     const job = getReportJob(req.params.jobId);
     if (!job) {
@@ -3263,13 +3292,13 @@ async function handleGetHorasExtraPdfJob(req, res) {
   }
 }
 
-async function handleDownloadHorasExtraPdfJob(req, res) {
+async function handleDownloadHorasExtraReportJob(req, res) {
   try {
     const job = getReportJob(req.params.jobId);
     if (!job) {
       return res.status(404).json({
         success: false,
-        error: 'El job no existe o ya expiró.'
+        error: 'El job no existe o ya expiro.'
       });
     }
 
@@ -3280,14 +3309,14 @@ async function handleDownloadHorasExtraPdfJob(req, res) {
         status: job.status,
         message: job.status === 'error'
           ? job.message
-          : 'El PDF todavía no está listo.',
+          : 'El reporte todavia no esta listo.',
         downloadUrl: job.status === 'ready' ? getReportJobDownloadUrl(job.jobId) : null
       });
     }
 
     res.download(job.filePath, job.fileName || 'horas_jornada_compilado.pdf', (err) => {
       if (err) {
-        console.error('Error descargando PDF de job:', err);
+        console.error('Error descargando reporte de job:', err);
         if (!res.headersSent) {
           res.status(500).json({ success: false, error: err.message });
         }
@@ -3343,12 +3372,18 @@ router.post("/administrador/admin_horas_extra/resumen", handleResumen);
 router.post("/descargar", handleDescargar);
 router.post("/administrador/admin_horas_extra/descargar", handleDescargar);
 
-router.post("/pdf-jobs", handleStartHorasExtraPdfJob);
-router.post("/administrador/admin_horas_extra/pdf-jobs", handleStartHorasExtraPdfJob);
-router.get("/pdf-jobs/:jobId", handleGetHorasExtraPdfJob);
-router.get("/administrador/admin_horas_extra/pdf-jobs/:jobId", handleGetHorasExtraPdfJob);
-router.get("/pdf-jobs/:jobId/download", handleDownloadHorasExtraPdfJob);
-router.get("/administrador/admin_horas_extra/pdf-jobs/:jobId/download", handleDownloadHorasExtraPdfJob);
+router.post("/report-jobs", handleStartHorasExtraReportJob);
+router.post("/administrador/admin_horas_extra/report-jobs", handleStartHorasExtraReportJob);
+router.post("/pdf-jobs", handleStartHorasExtraReportJob);
+router.post("/administrador/admin_horas_extra/pdf-jobs", handleStartHorasExtraReportJob);
+router.get("/report-jobs/:jobId", handleGetHorasExtraReportJob);
+router.get("/administrador/admin_horas_extra/report-jobs/:jobId", handleGetHorasExtraReportJob);
+router.get("/pdf-jobs/:jobId", handleGetHorasExtraReportJob);
+router.get("/administrador/admin_horas_extra/pdf-jobs/:jobId", handleGetHorasExtraReportJob);
+router.get("/report-jobs/:jobId/download", handleDownloadHorasExtraReportJob);
+router.get("/administrador/admin_horas_extra/report-jobs/:jobId/download", handleDownloadHorasExtraReportJob);
+router.get("/pdf-jobs/:jobId/download", handleDownloadHorasExtraReportJob);
+router.get("/administrador/admin_horas_extra/pdf-jobs/:jobId/download", handleDownloadHorasExtraReportJob);
 
 export default router;
 
