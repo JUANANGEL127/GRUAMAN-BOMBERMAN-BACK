@@ -3246,7 +3246,7 @@ async function handleStartHorasExtraReportJob(req, res) {
         ? 'No hay registros para generar el reporte.'
         : 'El reporte se está generando en segundo plano.',
       downloadUrl: null,
-      statusUrl: `/api/administrador/admin_horas_extra/report-jobs/${job.jobId}`,
+      statusUrl: `/administrador/admin_horas_extra/report-jobs/${job.jobId}`,
       requestedAt: new Date().toISOString(),
       format: formato,
       fileName: job.fileName
