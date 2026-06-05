@@ -40,6 +40,7 @@ function normalizeReportJobRecord(job) {
   return {
     jobId: job.jobId,
     format: job.format || 'pdf',
+    fileName: job.fileName || (job.format === 'excel' ? 'horas_jornada_compilado.xlsx' : 'horas_jornada_compilado.pdf'),
     status: job.status,
     message: job.message,
     downloadUrl: job.status === 'ready' ? getReportJobDownloadUrl(job.jobId) : null,
@@ -71,6 +72,7 @@ function scheduleReportJobCleanup(jobId, delayMs = REPORT_JOB_RETENTION_MS) {
 
 function createReportJobRecord(payload = {}) {
   const now = new Date().toISOString();
+  const format = String(payload.format || payload.formato || 'pdf').trim().toLowerCase() === 'excel' ? 'excel' : 'pdf';
   const job = {
     jobId: randomUUID(),
     status: 'pending',
@@ -79,7 +81,8 @@ function createReportJobRecord(payload = {}) {
     updatedAt: now,
     expiresAt: null,
     filePath: null,
-    fileName: 'horas_jornada_compilado.pdf',
+    format,
+    fileName: format === 'excel' ? 'horas_jornada_compilado.xlsx' : 'horas_jornada_compilado.pdf',
     error: null,
     ...payload
   };
@@ -3241,12 +3244,14 @@ async function handleStartHorasExtraReportJob(req, res) {
       status: q.rowCount === 0 ? 'error' : 'pending',
       message: q.rowCount === 0
         ? 'No hay registros para generar el reporte.'
-        : `El ${formato === 'excel' ? 'Excel' : 'PDF'} se está generando en segundo plano.`,
+        : 'El reporte se está generando en segundo plano.',
       downloadUrl: null,
-      statusUrl: `/administrador/admin_horas_extra/report-jobs/${job.jobId}`,
+      statusUrl: `/api/administrador/admin_horas_extra/report-jobs/${job.jobId}`,
       requestedAt: new Date().toISOString(),
-      format: formato
+      format: formato,
+      fileName: job.fileName
     });
+
     if (q.rowCount === 0) {
       finalizeReportJob(job.jobId, 'error', 'No hay registros para generar el reporte.');
       return;
@@ -3314,7 +3319,12 @@ async function handleDownloadHorasExtraReportJob(req, res) {
       });
     }
 
-    res.download(job.filePath, job.fileName || 'horas_jornada_compilado.pdf', (err) => {
+    const downloadFileName = job.fileName
+      || (path.extname(job.filePath || '').toLowerCase() === '.xlsx'
+        ? 'horas_jornada_compilado.xlsx'
+        : 'horas_jornada_compilado.pdf');
+
+    res.download(job.filePath, downloadFileName, (err) => {
       if (err) {
         console.error('Error descargando reporte de job:', err);
         if (!res.headersSent) {
