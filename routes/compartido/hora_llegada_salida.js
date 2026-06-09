@@ -1,26 +1,29 @@
-import express from "express";
+﻿import express from "express";
 import { DateTime } from "luxon";
 import cron from "node-cron";
 import { enviarDocumentoAFirmar } from '../signio.js';
 import { generarPDF, generarPDFYEnviarAFirmar } from '../../helpers/pdfGenerator.js';
+import { toFiniteCoordinate } from "../../helpers/locationValidation.js";
 const router = express.Router();
 
 /**
- * Proxy de BD diferido — resuelve global.db en el momento de la llamada para evitar capturar
- * una referencia al pool sin inicializar cuando el módulo se importa por primera vez.
+ * Proxy de BD diferido â€” resuelve global.db en el momento de la llamada para evitar capturar
+ * una referencia al pool sin inicializar cuando el mÃ³dulo se importa por primera vez.
  */
 const db = {
   query: (...args) => {
-    if (!global.db) throw new Error("global.db no está disponible");
+    if (!global.db) throw new Error("global.db no estÃ¡ disponible");
     return global.db.query(...args);
   }
 };
+
+const getLocationAuditRepository = () => global.locationAuditRepository || null;
 
 const CRON_TIMEZONE = 'America/Bogota';
 
 /**
  * Conjunto de bloqueos en memoria para prevenir inserciones duplicadas de ingreso concurrentes
- * para la misma combinación de operador/fecha/hora.
+ * para la misma combinaciÃ³n de operador/fecha/hora.
  * @type {Set<string>}
  */
 const _ingresoEnProceso = new Set();
@@ -47,7 +50,7 @@ function calcularHoraSalida(horaIngreso) {
 
 /**
  * Completa las horas de salida faltantes para todos los operadores en una fecha dada.
- * Para cada operador, toma el registro abierto más antiguo (sin hora_salida) y
+ * Para cada operador, toma el registro abierto mÃ¡s antiguo (sin hora_salida) y
  * establece hora_salida = hora_ingreso + 7 h 20 min.
  * @param {string|null} fecha - Fecha "YYYY-MM-DD" a procesar; por defecto ayer.
  * @returns {Promise<{ fecha: string, actualizados: Array<{ id: number, nombre_operador: string, hora_ingreso: string, hora_salida: string }> }>}
@@ -81,13 +84,13 @@ async function completarSalidasParaFecha(fecha) {
 }
 
 /**
- * Tarea programada: completa las horas de salida pendientes del día calendario anterior.
+ * Tarea programada: completa las horas de salida pendientes del dÃ­a calendario anterior.
  * Se ejecuta diariamente a las 00:00 hora Colombia (05:00 UTC).
  */
 cron.schedule('0 5 * * *', async () => {
   try {
     const ahora = DateTime.now().setZone(CRON_TIMEZONE);
-    console.log(`[CRON] Ejecutando a las ${ahora.toFormat('yyyy-MM-dd HH:mm:ss')} (hora Bogotá)`);
+    console.log(`[CRON] Ejecutando a las ${ahora.toFormat('yyyy-MM-dd HH:mm:ss')} (hora BogotÃ¡)`);
     const ayer = ahora.minus({ days: 1 }).toISODate();
     const { fecha, actualizados } = await completarSalidasParaFecha(ayer);
     console.log(`[CRON 00:00] Completadas ${actualizados.length} salidas para ${fecha}`);
@@ -98,9 +101,9 @@ cron.schedule('0 5 * * *', async () => {
 });
 
 /**
- * Recuperación al inicio: completa las horas de salida pendientes de ayer y anteayer.
- * Protege contra el caso en que el cron no se haya ejecutado mientras el servidor estuvo caído.
- * Se ejecuta 8 segundos después de cargar el módulo para permitir que el pool de BD se inicialice.
+ * RecuperaciÃ³n al inicio: completa las horas de salida pendientes de ayer y anteayer.
+ * Protege contra el caso en que el cron no se haya ejecutado mientras el servidor estuvo caÃ­do.
+ * Se ejecuta 8 segundos despuÃ©s de cargar el mÃ³dulo para permitir que el pool de BD se inicialice.
  */
 (function ejecutarCompletarSalidasAlIniciar() {
   const delayMs = 8000;
@@ -158,15 +161,30 @@ function normalizeFechaToBogota(fechaInput) {
   }
 }
 
+function normalizeName(value) {
+  return String(value || "").trim().toLocaleLowerCase();
+}
+
+function getAuthContext(req) {
+  const user = req.auth?.user || null;
+  const session = req.auth?.session || null;
+  return {
+    sessionId: session?.id || null,
+    actorId: user?.id || null,
+    actorType: user?.actorType || null,
+    workerId: user?.actorType === "worker" ? Number(user.id) : null
+  };
+}
+
 /**
  * POST /horas_jornada/ingreso
  * Crea un nuevo registro de ingreso para un operador en una fecha de servicio dada.
  * Rechaza si ya existe un registro abierto (sin hora_salida) para ese par operador/fecha.
- * Un bloqueo en memoria previene condiciones de carrera en solicitudes duplicadas simultáneas.
+ * Un bloqueo en memoria previene condiciones de carrera en solicitudes duplicadas simultÃ¡neas.
  * @body {{ nombre_proyecto: string, fecha_servicio: string, nombre_operador: string, empresa_id: number, hora_ingreso: string, nombre_cliente?: string, cargo?: string, minutos_almuerzo?: number }}
  * @returns {{ success: boolean, id: number }}
- * @throws {400} Si faltan campos requeridos o fecha_servicio es inválida.
- * @throws {409} Si hay una inserción concurrente en progreso o ya existe un registro abierto.
+ * @throws {400} Si faltan campos requeridos o fecha_servicio es invÃ¡lida.
+ * @throws {409} Si hay una inserciÃ³n concurrente en progreso o ya existe un registro abierto.
  */
 router.post("/ingreso", async (req, res) => {
   const {
@@ -181,7 +199,7 @@ router.post("/ingreso", async (req, res) => {
   } = req.body || {};
 
   if (!nombre_proyecto || !fecha_servicio || !nombre_operador || !empresa_id || !hora_ingreso) {
-    return res.status(400).json({ error: "Faltan parámetros obligatorios: nombre_proyecto, fecha_servicio, nombre_operador, empresa_id, hora_ingreso" });
+    return res.status(400).json({ error: "Faltan parÃ¡metros obligatorios: nombre_proyecto, fecha_servicio, nombre_operador, empresa_id, hora_ingreso" });
   }
 
   const lockKey = `${nombre_operador}|${fecha_servicio}|${hora_ingreso}`;
@@ -192,7 +210,7 @@ router.post("/ingreso", async (req, res) => {
 
   try {
     const fechaDia = normalizeFechaToBogota(fecha_servicio);
-    if (!fechaDia) return res.status(400).json({ error: "fecha_servicio inválida" });
+    if (!fechaDia) return res.status(400).json({ error: "fecha_servicio invÃ¡lida" });
 
     const registroAbierto = await db.query(
       `SELECT id, hora_ingreso FROM horas_jornada
@@ -240,26 +258,63 @@ router.post("/ingreso", async (req, res) => {
 
 /**
  * POST /horas_jornada/salida
- * Registra la hora de salida para el registro de ingreso abierto más reciente de un operador.
- * Selecciona el último registro abierto por hora_ingreso DESC.
- * @body {{ nombre_operador: string, fecha_servicio: string, hora_salida: string }}
+ * Registra la hora de salida para el registro de ingreso abierto mÃ¡s reciente de un operador.
+ * Selecciona el Ãºltimo registro abierto por hora_ingreso DESC.
+ * @body {{ nombre_operador: string, fecha_servicio: string, hora_salida: string, lat: number, lon: number, obra_id?: number, accuracy_meters?: number }}
  * @returns {{ success: boolean, id: number }}
- * @throws {400} Si faltan campos requeridos o fecha_servicio es inválida.
+ * @throws {400} Si faltan campos requeridos, coordenadas o fecha_servicio invalida.
+ * @throws {403} Si el trabajador intenta cerrar otra jornada o esta fuera del rango permitido.
  * @throws {404} Si no existe un registro de ingreso abierto para ese operador/fecha.
  */
 router.post("/salida", async (req, res) => {
-  const { nombre_operador, fecha_servicio, hora_salida } = req.body || {};
+  const {
+    nombre_operador,
+    fecha_servicio,
+    hora_salida,
+    obra_id,
+    lat,
+    lon,
+    accuracy_meters
+  } = req.body || {};
 
   if (!nombre_operador || !fecha_servicio || !hora_salida) {
-    return res.status(400).json({ error: "Faltan parámetros obligatorios: nombre_operador, fecha_servicio, hora_salida" });
+    return res.status(400).json({ error: "Faltan parametros obligatorios: nombre_operador, fecha_servicio, hora_salida" });
   }
 
+  const auth = getAuthContext(req);
+  const locationAuditRepository = getLocationAuditRepository();
+  const latitude = toFiniteCoordinate(lat);
+  const longitude = toFiniteCoordinate(lon);
+  const numericObraId = obra_id == null ? null : Number(obra_id);
+
   try {
+    if (auth.actorType === "worker") {
+      const authenticatedName = normalizeName(req.auth?.user?.nombre);
+      const requestedName = normalizeName(nombre_operador);
+      if (authenticatedName && requestedName && authenticatedName !== requestedName) {
+        if (locationAuditRepository) {
+          await locationAuditRepository.appendAuditLog({
+            sessionId: auth.sessionId,
+            actorId: auth.actorId,
+            actorType: auth.actorType,
+            workerId: auth.workerId,
+            eventType: "salida_attempt",
+            action: "denied",
+            message: "El trabajador autenticado intento cerrar una jornada de otro operador",
+            payload: req.body,
+            request: req
+          });
+        }
+        return res.status(403).json({ error: "No tienes permisos para registrar salida de otro operador" });
+      }
+    }
+
     const fechaDia = normalizeFechaToBogota(fecha_servicio);
-    if (!fechaDia) return res.status(400).json({ error: "fecha_servicio inválida" });
+    if (!fechaDia) return res.status(400).json({ error: "fecha_servicio invalida" });
 
     const registroPendiente = await db.query(
-      `SELECT id, hora_ingreso FROM horas_jornada
+      `SELECT id, hora_ingreso, nombre_proyecto, empresa_id
+       FROM horas_jornada
        WHERE nombre_operador = $1
        AND fecha_servicio = $2::date
        AND hora_salida IS NULL
@@ -269,22 +324,162 @@ router.post("/salida", async (req, res) => {
     );
 
     if (registroPendiente.rows.length === 0) {
+      if (locationAuditRepository) {
+        await locationAuditRepository.appendAuditLog({
+          sessionId: auth.sessionId,
+          actorId: auth.actorId,
+          actorType: auth.actorType,
+          workerId: auth.workerId,
+          eventType: "salida_attempt",
+          action: "denied",
+          message: "No existe registro abierto para registrar salida",
+          payload: req.body,
+          request: req
+        });
+      }
       const debug = await db.query(
         `SELECT id, hora_ingreso, hora_salida FROM horas_jornada WHERE nombre_operador = $1 AND fecha_servicio = $2::date ORDER BY hora_ingreso ASC`,
         [nombre_operador, fechaDia]
       );
-      console.warn(`[salida] No se encontró registro abierto. Operador: "${nombre_operador}", Fecha: "${fechaDia}". Registros del día: ${JSON.stringify(debug.rows)}`);
+      console.warn(`[salida] No se encontro registro abierto. Operador: "${nombre_operador}", Fecha: "${fechaDia}". Registros del dia: ${JSON.stringify(debug.rows)}`);
       return res.status(404).json({ error: "No existe un registro de entrada para guardar la hora de salida", fecha_buscada: fechaDia, operador: nombre_operador });
     }
 
-    const registroId = registroPendiente.rows[0].id;
+    const registro = registroPendiente.rows[0];
+
+    if (!locationAuditRepository) {
+      await db.query(
+        `UPDATE horas_jornada SET hora_salida = $1 WHERE id = $2`,
+        [hora_salida, registro.id]
+      );
+      return res.json({ success: true, id: registro.id, geo_validated: false });
+    }
+
+    if (latitude == null || longitude == null) {
+      await locationAuditRepository.appendAuditLog({
+        sessionId: auth.sessionId,
+        actorId: auth.actorId,
+        actorType: auth.actorType,
+        workerId: auth.workerId,
+        horasJornadaId: registro.id,
+        eventType: "salida_attempt",
+        action: "denied",
+        message: "Faltan coordenadas de dispositivo para validar salida",
+        payload: req.body,
+        request: req
+      });
+      return res.status(400).json({
+        error: "Faltan coordenadas de ubicacion para registrar la salida",
+        requerido: ["lat", "lon"]
+      });
+    }
+
+    let resolvedObra = null;
+    if (Number.isFinite(numericObraId) && numericObraId > 0) {
+      resolvedObra = await locationAuditRepository.resolveObraById(numericObraId);
+    }
+
+    if (!resolvedObra && auth.sessionId) {
+      const sessionContext = await locationAuditRepository.findSessionContext(auth.sessionId);
+      if (sessionContext?.obraId) {
+        resolvedObra = await locationAuditRepository.resolveObraById(sessionContext.obraId);
+      }
+    }
+
+    if (!resolvedObra && registro?.nombre_proyecto) {
+      resolvedObra = await locationAuditRepository.resolveObraByProyecto({
+        nombreProyecto: registro.nombre_proyecto,
+        empresaId: registro.empresa_id
+      });
+    }
+
+    if (!resolvedObra) {
+      await locationAuditRepository.appendAuditLog({
+        sessionId: auth.sessionId,
+        actorId: auth.actorId,
+        actorType: auth.actorType,
+        workerId: auth.workerId,
+        horasJornadaId: registro.id,
+        eventType: "salida_attempt",
+        action: "denied",
+        message: "No fue posible resolver obra para validar geolocalizacion de salida",
+        latitude,
+        longitude,
+        payload: req.body,
+        request: req
+      });
+      return res.status(400).json({
+        error: "No se pudo determinar la obra para validar la ubicacion de salida"
+      });
+    }
+
+    const validation = await locationAuditRepository.validateCoordinatesAgainstObra({
+      obraId: resolvedObra.id,
+      latitude,
+      longitude
+    });
+
+    if (!validation.ok) {
+      await locationAuditRepository.appendAuditLog({
+        sessionId: auth.sessionId,
+        actorId: auth.actorId,
+        actorType: auth.actorType,
+        workerId: auth.workerId,
+        horasJornadaId: registro.id,
+        eventType: "salida_attempt",
+        action: "denied",
+        message: validation.message,
+        obraId: resolvedObra.id,
+        obraNombre: resolvedObra.nombre,
+        latitude,
+        longitude,
+        accuracyMeters: accuracy_meters ?? null,
+        distanceMeters: validation.distanceMeters,
+        withinRange: false,
+        payload: req.body,
+        request: req
+      });
+      return res.status(403).json({
+        error: validation.message,
+        distancia: validation.distanceMeters,
+        obra_id: resolvedObra.id,
+        obra: resolvedObra.nombre
+      });
+    }
 
     await db.query(
       `UPDATE horas_jornada SET hora_salida = $1 WHERE id = $2`,
-      [hora_salida, registroId]
+      [hora_salida, registro.id]
     );
 
-    return res.json({ success: true, id: registroId });
+    await locationAuditRepository.appendAuditLog({
+      sessionId: auth.sessionId,
+      actorId: auth.actorId,
+      actorType: auth.actorType,
+      workerId: auth.workerId,
+      horasJornadaId: registro.id,
+      eventType: "salida_attempt",
+      action: "allowed",
+      message: "Salida registrada con ubicacion validada",
+      obraId: resolvedObra.id,
+      obraNombre: resolvedObra.nombre,
+      latitude,
+      longitude,
+      accuracyMeters: accuracy_meters ?? null,
+      distanceMeters: validation.distanceMeters,
+      withinRange: true,
+      payload: req.body,
+      request: req
+    });
+
+    return res.json({
+      success: true,
+      id: registro.id,
+      obra_id: resolvedObra.id,
+      obra: resolvedObra.nombre,
+      distancia: validation.distanceMeters,
+      geo_validated: true
+    });
   } catch (err) {
     console.error("Error registrando salida:", err);
     return res.status(500).json({ error: "Error registrando salida", detalle: err.message });
@@ -294,7 +489,7 @@ router.post("/salida", async (req, res) => {
 /**
  * POST /horas_jornada/completar-salidas
  * Dispara manualmente el relleno de horas de salida para una fecha dada.
- * Útil para corregir datos cuando el cron programado no se ejecutó.
+ * Ãštil para corregir datos cuando el cron programado no se ejecutÃ³.
  * @body {{ fecha?: string }} Fecha opcional "YYYY-MM-DD"; por defecto ayer.
  * @returns {{ success: boolean, fecha: string, actualizados: number, detalle: Array }}
  */
@@ -316,7 +511,7 @@ router.post("/completar-salidas", async (req, res) => {
 
 /**
  * GET /horas_jornada
- * Retorna los 100 registros de horas de jornada más recientes ordenados por fecha de servicio descendente.
+ * Retorna los 100 registros de horas de jornada mÃ¡s recientes ordenados por fecha de servicio descendente.
  * @returns {{ count: number, rows: Array }}
  */
 router.get("/", async (req, res) => {

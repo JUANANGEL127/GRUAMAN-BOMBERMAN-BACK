@@ -92,7 +92,7 @@ export function createFormatosObligatoriosEstadoService({ repository }) {
       for (const form of FORM_CATALOG) {
         let row = null;
         if (form.type === "ingreso") {
-          console.log({ nombreOperador: worker.nombre, nombreProyecto, fechaServicio });
+          //console.log({ nombreOperador: worker.nombre, nombreProyecto, fechaServicio });
           
           row = await repository.findLatestIngreso({ nombreOperador: worker.nombre, nombreProyecto, fechaServicio, empresaId });
         } else if (form.type === "salida") {

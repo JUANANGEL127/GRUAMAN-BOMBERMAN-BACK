@@ -2,6 +2,7 @@ import express from "express";
 import bcrypt from "bcrypt";
 import { writeAuthCookies } from "../helpers/authCookies.js";
 import { requireWorkerSelfOrAdmin } from "../middlewares/requireWorkerSelfOrAdmin.js";
+import { toFiniteCoordinate } from "../helpers/locationValidation.js";
 const router = express.Router();
 
 const SALT_ROUNDS = 10;
@@ -182,7 +183,7 @@ router.post("/set", async (req, res) => {
  * @throws {429} Si la IP ha superado el límite de tasa.
  */
 router.post("/verify", async (req, res) => {
-  const { numero_identificacion, pin } = req.body;
+  const { numero_identificacion, pin, obra_id, lat, lon, accuracy_meters } = req.body;
   if (!numero_identificacion || !pin) {
     return res.status(400).json({ error: "Faltan datos" });
   }
@@ -233,6 +234,76 @@ router.post("/verify", async (req, res) => {
       worker: q.rows[0],
       request: req
     });
+
+    const locationAuditRepository = global.locationAuditRepository || null;
+    if (locationAuditRepository) {
+      const requestedObraId = Number(obra_id);
+      const latitude = toFiniteCoordinate(lat);
+      const longitude = toFiniteCoordinate(lon);
+      const canValidateSessionLocation =
+        Number.isFinite(requestedObraId) &&
+        requestedObraId > 0 &&
+        latitude != null &&
+        longitude != null;
+
+      if (canValidateSessionLocation) {
+        const validation = await locationAuditRepository.validateCoordinatesAgainstObra({
+          obraId: requestedObraId,
+          latitude,
+          longitude
+        });
+
+        await locationAuditRepository.appendAuditLog({
+          sessionId: sessionResult.session.id,
+          actorId: sessionResult.user.id,
+          actorType: sessionResult.user.actorType,
+          workerId: Number(sessionResult.user.id),
+          eventType: "session_start_location",
+          action: validation.ok ? "allowed" : "denied",
+          message: validation.message,
+          obraId: validation.obra?.id || requestedObraId,
+          obraNombre: validation.obra?.nombre || null,
+          latitude,
+          longitude,
+          accuracyMeters: accuracy_meters ?? null,
+          distanceMeters: validation.distanceMeters,
+          withinRange: validation.ok,
+          payload: req.body,
+          request: req
+        });
+
+        if (validation.ok && validation.obra) {
+          await locationAuditRepository.upsertSessionContext({
+            sessionId: sessionResult.session.id,
+            actorId: sessionResult.user.id,
+            actorType: sessionResult.user.actorType,
+            workerId: Number(sessionResult.user.id),
+            obraId: validation.obra.id,
+            obraNombre: validation.obra.nombre,
+            latitude,
+            longitude,
+            accuracyMeters: accuracy_meters ?? null,
+            distanceMeters: validation.distanceMeters,
+            withinRange: true,
+            validationSource: "auth_pin_verify",
+            request: req
+          });
+        }
+      } else {
+        await locationAuditRepository.appendAuditLog({
+          sessionId: sessionResult.session.id,
+          actorId: sessionResult.user.id,
+          actorType: sessionResult.user.actorType,
+          workerId: Number(sessionResult.user.id),
+          eventType: "session_start_location",
+          action: "error",
+          message: "Inicio de sesión sin contexto geográfico completo",
+          payload: req.body,
+          request: req
+        });
+      }
+    }
+
     writeAuthCookies(res, authConfig, sessionResult);
     res.json({
       success: true,
