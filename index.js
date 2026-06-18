@@ -1,7 +1,8 @@
-ï»¿import express from "express";
+import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pkg from "pg";
+import { fileURLToPath } from "node:url";
 import bcrypt from "bcrypt";
 import webpush from "web-push";
 import cron from "node-cron";
@@ -22,6 +23,13 @@ import kitLimpiezaRouter from "./routes/bomberman/kit_limpieza.js";
 import chequeoElevadorRouter from "./routes/gruaman/chequeo_elevador.js";
 import atsRouter from "./routes/gruaman/ats.js";
 import fetch from 'node-fetch';
+import { createCampaignsConfig, createCampaignsUploadMiddleware } from "./config/campaignsConfig.js";
+import { createStorageProvider } from "./storage/storageProvider.js";
+import { initializeCampaignsSchema, createCampaignsRepository } from "./repositories/campaignsRepository.js";
+import { createCampaignsService } from "./services/campaignsService.js";
+import { createCampaignsController } from "./controllers/campaignsController.js";
+import { createCampaignsRouter } from "./routes/campaigns.js";
+import { createAdminCampaignsRouter } from "./routes/administrador/campaigns.js";
 import chequeoTorregruasAdminRouter from "./routes/adminsitrador_gruaman/chequeo_torregruas_admin.js";
 import chequeoElevadorAdminRouter from "./routes/adminsitrador_gruaman/chequeo_elevador_admin.js";
 import chequeoAlturasAdminRouter from "./routes/adminsitrador_gruaman/chequeo_alturas_admin.js";
@@ -33,8 +41,8 @@ import herramientasMantenimientoAdminRouter from "./routes/administrador_bomberm
 import kitLimpiezaAdminRouter from "./routes/administrador_bomberman/kit_limpieza_admin.js";
 import adminUsuariosRouter from "./routes/administrador/admin_usuarios.js";
 import adminObrasRouter from "./routes/administrador/admin_obras.js";
-// adminHorasExtraRouter se importa dinÃ¡micamente dentro del IIFE de inicio para
-// garantizar que global.db estÃ© disponible antes de que se evalÃºe el mÃ³dulo.
+// adminHorasExtraRouter se importa dinámicamente dentro del IIFE de inicio para
+// garantizar que global.db esté disponible antes de que se evalúe el módulo.
 import webauthnRouter, { configureWebAuthnSession } from './routes/webauthn.js';
 import signioRouter, { configureSignioAuth } from './routes/signio.js';
 import registrosDiariosRouter from './routes/administrador/registros_diarios.js';
@@ -101,7 +109,7 @@ webpush.setVapidDetails(
 );
 
 /**
- * EnvÃ­a una notificaciÃ³n Web Push a una suscripciÃ³n con un TTL de 24 horas
+ * Envía una notificación Web Push a una suscripción con un TTL de 24 horas
  * y urgencia alta.
  * @param {object} subscription - Objeto PushSubscription (endpoint + keys).
  * @param {{ title: string, body: string, icon?: string, url?: string }} payload
@@ -125,6 +133,9 @@ async function sendPushNotification(subscription, payload) {
 const { Pool } = pkg;
 const app = express();
 const authConfig = createAuthConfig();
+const campaignsConfig = createCampaignsConfig();
+const campaignsPublicDirectory = fileURLToPath(new URL("./storage/campaigns", import.meta.url));
+
 
 const DB_POOL_MAX = Number(process.env.DB_POOL_MAX || 20);
 const DB_IDLE_TIMEOUT_MS = Number(process.env.DB_IDLE_TIMEOUT_MS || 30000);
@@ -180,6 +191,7 @@ app.use(cors({
 }));
 app.use(cookieParser());
 app.use(express.json());
+app.use(campaignsConfig.storage.renderDisk.publicPath, express.static(campaignsPublicDirectory));
 app.use('/webauthn', webauthnRouter);
 app.use('/signio', signioRouter);
 app.use('/auth/pin', authPinRouter);
@@ -263,6 +275,21 @@ process.on("SIGINT", () => {
 global.db = pool;
 
 const authSessionRepository = createAuthSessionRepository({ db: pool });
+const campaignsRepository = createCampaignsRepository({ db: pool });
+const campaignsStorageProvider = createStorageProvider(campaignsConfig);
+const campaignsService = createCampaignsService({
+  repository: campaignsRepository,
+  storageProvider: campaignsStorageProvider,
+  storageProviderName: campaignsConfig.storage.provider
+});
+const campaignsController = createCampaignsController({ service: campaignsService });
+const campaignsUploadMiddleware = createCampaignsUploadMiddleware(campaignsConfig);
+const campaignsRouter = createCampaignsRouter({ campaignsController });
+const adminCampaignsRouter = createAdminCampaignsRouter({
+  campaignsController,
+  uploadMiddleware: campaignsUploadMiddleware
+});
+
 const locationAuditRepository = createLocationAuditRepository({
   db: pool,
   maxDistanceMeters: ATTENDANCE_GEO_MAX_DISTANCE_METERS,
@@ -293,7 +320,7 @@ app.use('/auth', createAuthSessionRouter({ authSessionController, csrfProtection
 
 /**
  * IIFE de inicio: ejecuta todas las migraciones idempotentes CREATE TABLE / ALTER TABLE,
- * luego importa y monta dinÃ¡micamente los routers que dependen de global.db.
+ * luego importa y monta dinámicamente los routers que dependen de global.db.
  */
 (async () => {
   await pool.query(`
@@ -644,6 +671,7 @@ app.use('/auth', createAuthSessionRouter({ authSessionController, csrfProtection
 
   await initializeAuthSessionSchema(pool);
   await initializeLocationAuditSchema(pool);
+  await initializeCampaignsSchema(pool);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -943,14 +971,14 @@ app.use('/auth', createAuthSessionRouter({ authSessionController, csrfProtection
 
 /**
  * POST /push/test
- * EnvÃ­a una notificaciÃ³n push de prueba a un trabajador especÃ­fico identificado por numero_identificacion.
+ * Envía una notificación push de prueba a un trabajador específico identificado por numero_identificacion.
  * @body {{ numero_identificacion: string, title: string, body: string }}
  * @returns {{ success: boolean, message: string }}
  */
 app.post("/push/test", authenticateSession, requireAdminRead, csrfProtection, async (req, res) => {
   const { numero_identificacion, title, body } = req.body;
   if (!numero_identificacion || !title || !body) {
-    return res.status(400).json({ error: "Faltan parÃ¡metros obligatorios (numero_identificacion, title, body)" });
+    return res.status(400).json({ error: "Faltan parámetros obligatorios (numero_identificacion, title, body)" });
   }
   try {
     const workerRes = await pool.query(
@@ -966,7 +994,7 @@ app.post("/push/test", authenticateSession, requireAdminRead, csrfProtection, as
       [String(numero_identificacion)]
     );
     if (workerRes.rows.length === 0) {
-      return res.status(404).json({ error: "SuscripciÃ³n no encontrada para ese trabajador" });
+      return res.status(404).json({ error: "Suscripción no encontrada para ese trabajador" });
     }
 
     let sent = 0;
@@ -998,6 +1026,8 @@ app.post("/push/test", authenticateSession, requireAdminRead, csrfProtection, as
 app.use('/api', authenticateSession, requireAdminRead, csrfProtection, registrosDiariosRouter);
 app.use('/administrador/registros_diarios', authenticateSession, requireAdminRead, csrfProtection, registrosDiariosRouter);
 app.use('/administrador/indicador_central', authenticateSession, requireAdminRead, csrfProtection, indicadorCentralRouter);
+app.use("/campaigns", campaignsRouter);
+app.use("/administrador/campaigns", authenticateSession, requireAdminRead, csrfProtection, adminCampaignsRouter);
 app.use("/administrador", authenticateSession, requireAdminRead, csrfProtection, administradorRouter);
 app.use("/permiso_trabajo_admin", authenticateSession, requireAdminRead, csrfProtection, administradorRouter);
 app.use("/inspeccion_izaje_admin", authenticateSession, requireGruamanAdmin, csrfProtection, inspeccionIzajeAdminRouter);
@@ -1075,7 +1105,7 @@ app.post("/datos_basicos", authenticateSession, requireAdminRead, csrfProtection
   const { nombre, empresa, empresa_id, obra_id, numero_identificacion } = req.body;
 
   if (!nombre || !empresa || !empresa_id || !obra_id || !numero_identificacion) {
-    return res.status(400).json({ error: "Faltan parÃ¡metros obligatorios" });
+    return res.status(400).json({ error: "Faltan parámetros obligatorios" });
   }
 
   try {
@@ -1104,7 +1134,7 @@ app.post("/datos_basicos", authenticateSession, requireAdminRead, csrfProtection
     }
 
     res.json({
-      message: "Datos bÃ¡sicos guardados",
+      message: "Datos básicos guardados",
       trabajadorId,
       nombre,
       empresa,
@@ -1126,7 +1156,7 @@ app.post("/datos_basicos", authenticateSession, requireAdminRead, csrfProtection
 app.get("/trabajador_id", authenticateSession, requireAuthenticatedActor, csrfProtection, async (req, res) => {
   const { nombre, empresa, obra, numero_identificacion } = req.query;
   if (!nombre || !empresa || !obra || !numero_identificacion) {
-    return res.status(400).json({ error: "Faltan parÃ¡metros obligatorios" });
+    return res.status(400).json({ error: "Faltan parámetros obligatorios" });
   }
   try {
     const empresaRows = await pool.query(`SELECT id FROM empresas WHERE nombre = $1`, [empresa]);
@@ -1178,7 +1208,7 @@ app.get("/obras", async (req, res) => {
 
 /**
  * GET /bombas
- * Retorna todos los nÃºmeros de bomba registrados en la tabla bombas.
+ * Retorna todos los números de bomba registrados en la tabla bombas.
  * @returns {{ bombas: Array<{ numero_bomba: string }> }}
  */
 app.get("/bombas", async (req, res) => {
@@ -1186,14 +1216,14 @@ app.get("/bombas", async (req, res) => {
     const result = await pool.query(`SELECT numero_bomba FROM bombas`);
     res.json({ bombas: result.rows });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener los nÃºmeros de bomba" });
+    res.status(500).json({ error: "Error al obtener los números de bomba" });
   }
 });
 
 /**
  * POST /validar_ubicacion
- * Valida que una coordenada GPS dada se encuentre dentro de los 500 m de la ubicaciÃ³n registrada de la obra.
- * Las obras que coincidan con la variable de entorno OBRA_BYPASS_NOMBRE omiten la geolocalizaciÃ³n por completo.
+ * Valida que una coordenada GPS dada se encuentre dentro de los 500 m de la ubicación registrada de la obra.
+ * Las obras que coincidan con la variable de entorno OBRA_BYPASS_NOMBRE omiten la geolocalización por completo.
  * @body {{ obra_id: number, lat: number, lon: number, accuracy_meters?: number }}
  * @returns {{ ok: boolean, message?: string }}
  */
@@ -1203,7 +1233,7 @@ app.post("/validar_ubicacion", authenticateSession, requireAuthenticatedActor, c
   const longitude = toFiniteCoordinate(lon);
 
   if (!obra_id || latitude == null || longitude == null) {
-    return res.status(400).json({ ok: false, message: "ParÃ¡metros invÃ¡lidos" });
+    return res.status(400).json({ ok: false, message: "Parámetros inválidos" });
   }
 
   const sessionId = req.auth?.session?.id || null;
@@ -1271,7 +1301,7 @@ app.post("/validar_ubicacion", authenticateSession, requireAuthenticatedActor, c
       });
     }
   } catch (error) {
-    res.status(500).json({ ok: false, message: "Error al validar ubicaciÃ³n" });
+    res.status(500).json({ ok: false, message: "Error al validar ubicación" });
   }
 });
 
@@ -1297,7 +1327,7 @@ app.get("/datos_basicos", authenticateSession, requireAdminRead, csrfProtection,
     }
     res.json({ datos: result.rows });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener los datos bÃ¡sicos de trabajadores" });
+    res.status(500).json({ error: "Error al obtener los datos básicos de trabajadores" });
   }
 });
 
@@ -1310,7 +1340,7 @@ const adminLoginAttempts = new Map();
 
 /**
  * POST /admin/login
- * Autentica a un usuario administrador comparando la contraseÃ±a proporcionada contra todos
+ * Autentica a un usuario administrador comparando la contraseña proporcionada contra todos
  * los hashes bcrypt almacenados. Aplica un limitador de tasa en memoria de 10 intentos por IP
  * por ventana de 15 minutos.
  * @body {{ password: string }}
@@ -1318,7 +1348,7 @@ const adminLoginAttempts = new Map();
  */
 app.post("/admin/login", async (req, res) => {
   const { password } = req.body;
-  if (!password) return res.status(400).json({ error: "Falta la contraseÃ±a" });
+  if (!password) return res.status(400).json({ error: "Falta la contraseña" });
 
   const ipKey = req.ip;
   const now = Date.now();
@@ -1363,8 +1393,8 @@ app.post("/admin/login", async (req, res) => {
 
 /**
  * POST /push/subscribe
- * Registra o actualiza una suscripciÃ³n Web Push para un trabajador identificado por
- * numero_identificacion. Acepta la suscripciÃ³n como objeto JSON o como cadena JSON serializada.
+ * Registra o actualiza una suscripción Web Push para un trabajador identificado por
+ * numero_identificacion. Acepta la suscripción como objeto JSON o como cadena JSON serializada.
  * @body {{ numero_identificacion: string, subscription: object|string }}
  * @returns {{ success: boolean, action: 'upserted', subscriptionId: number|null }}
  */
@@ -1383,13 +1413,13 @@ app.post("/push/subscribe", authenticateSession, requireBodyWorkerSelfOrAdmin, c
     try {
       subscriptionObj = JSON.parse(subscription);
     } catch (err) {
-      console.error("Subscription string invÃ¡lida:", subscription);
-      return res.status(400).json({ error: "subscription debe ser un objeto JSON o un string JSON vÃ¡lido" });
+      console.error("Subscription string inválida:", subscription);
+      return res.status(400).json({ error: "subscription debe ser un objeto JSON o un string JSON válido" });
     }
   }
 
   if (typeof subscriptionObj !== "object" || Array.isArray(subscriptionObj)) {
-    return res.status(400).json({ error: "Formato de subscription invÃ¡lido" });
+    return res.status(400).json({ error: "Formato de subscription inválido" });
   }
   const endpoint = normalizePushEndpoint(subscriptionObj);
   if (!endpoint) {
@@ -1421,13 +1451,13 @@ app.post("/push/subscribe", authenticateSession, requireBodyWorkerSelfOrAdmin, c
     return res.json({ success: true, action: "upserted", subscriptionId: upsertResult.rows[0]?.id || null });
   } catch (error) {
     console.error("Error en /push/subscribe:", error);
-    res.status(500).json({ error: "Error guardando suscripciÃ³n", detalle: error.message });
+    res.status(500).json({ error: "Error guardando suscripción", detalle: error.message });
   }
 });
 
 /**
  * GET /push/subscribe/schema
- * Retorna una descripciÃ³n para desarrolladores del payload esperado en POST /push/subscribe.
+ * Retorna una descripción para desarrolladores del payload esperado en POST /push/subscribe.
  * @returns {{ description: string, contentType: string, bodyExample: object, frontendNotes: string[] }}
  */
 app.get("/push/subscribe/schema", (req, res) => {
@@ -1468,10 +1498,10 @@ const isPushCronEnabled = (() => {
 
 /**
  * Adquiere un bloqueo distribuido por hora mediante la tabla cron_locks antes de ejecutar
- * una tarea programada. Previene ejecuciones duplicadas en mÃºltiples instancias del servidor.
- * Ejecuta sin bloqueo si la tabla cron_locks no existe (cÃ³digo 42P01).
- * @param {string} nombreTarea - Nombre Ãºnico de la tarea usado como parte de la clave del bloqueo.
- * @param {() => Promise<void>} callback - Trabajo asÃ­ncrono a ejecutar bajo el bloqueo.
+ * una tarea programada. Previene ejecuciones duplicadas en múltiples instancias del servidor.
+ * Ejecuta sin bloqueo si la tabla cron_locks no existe (código 42P01).
+ * @param {string} nombreTarea - Nombre único de la tarea usado como parte de la clave del bloqueo.
+ * @param {() => Promise<void>} callback - Trabajo asíncrono a ejecutar bajo el bloqueo.
  * @returns {Promise<void>}
  */
 async function ejecutarConLock(nombreTarea, callback) {
@@ -1596,7 +1626,7 @@ cron.schedule('30 6 * * 1,2,3,4,5,6', async () => {
       jobKey: 'buenos_dias_630',
       title: "Buenos dias!",
       body: "buenos dias super heroe, no olvides llenar todos tus permisos el dia de hoy",
-      errorLabel: "Error enviando notificaciÃ³n 6:30am:"
+      errorLabel: "Error enviando notificación 6:30am:"
     });
   });
 }, { timezone: CRON_TIMEZONE });
@@ -1607,7 +1637,7 @@ cron.schedule('0 12 * * 1,2,3,4,5,6', async () => {
       jobKey: 'motivacion_1200',
       title: "Animo super heroe!",
       body: "hola super heroe, !tu puedes!, hoy es un gran dia para construir una catedral!",
-      errorLabel: "Error enviando notificaciÃ³n 12:00md:"
+      errorLabel: "Error enviando notificación 12:00md:"
     });
   });
 }, { timezone: CRON_TIMEZONE });
@@ -1618,7 +1648,7 @@ cron.schedule('0 12 * * 1,2,3,4,5,6', async () => {
       jobKey: 'seguimiento_1400',
       title: "Como vas?",
       body: "como vas super heroe?, todo marchando",
-      errorLabel: "Error enviando notificaciÃ³n 2:00pm:"
+      errorLabel: "Error enviando notificación 2:00pm:"
     });
   });
 }, { timezone: CRON_TIMEZONE }); */
@@ -1629,7 +1659,7 @@ cron.schedule('0 12 * * 1,2,3,4,5,6', async () => {
       jobKey: 'progreso_1525',
       title: "Hola super heroe!",
       body: "pasamos a recordarte que somos progreso!",
-      errorLabel: "Error enviando notificaciÃ³n 3:25pm:"
+      errorLabel: "Error enviando notificación 3:25pm:"
     });
   });
 }, { timezone: CRON_TIMEZONE });*/
@@ -1640,7 +1670,7 @@ cron.schedule('0 17 * * 1,2,3,4,5,6', async () => {
       jobKey: 'cierre_1700',
       title: "Terminaste?",
       body: "super heroe, ya terminaste todos tus registros?",
-      errorLabel: "Error enviando notificaciÃ³n 5:00pm:"
+      errorLabel: "Error enviando notificación 5:00pm:"
     });
   });
 }, { timezone: CRON_TIMEZONE });
@@ -1656,8 +1686,8 @@ const formularios = [
   { nombre: "permiso de trabajo", tabla: "permiso_trabajo" },
   { nombre: "chequeo de alturas", tabla: "chequeo_alturas" },
   { nombre: "chequeo de torregruas", tabla: "chequeo_torregruas" },
-  { nombre: "inspecciÃ³n EPCC", tabla: "inspeccion_epcc" },
-  { nombre: "inspecciÃ³n izaje", tabla: "inspeccion_izaje" },
+  { nombre: "inspección EPCC", tabla: "inspeccion_epcc" },
+  { nombre: "inspección izaje", tabla: "inspeccion_izaje" },
 ];
 
 cron.schedule('0 16 * * 1,2,3,4,5,6', async () => {
@@ -1727,7 +1757,7 @@ cron.schedule('0 16 * * 1,2,3,4,5,6', async () => {
           if (isTerminalPushError(err)) {
             await pool.query(`DELETE FROM push_subscriptions WHERE id = $1`, [row.subscription_id]).catch(() => {});
           }
-          console.error(`Error enviando notificaciÃ³n 4:00pm worker ${row.id}:`, err);
+          console.error(`Error enviando notificación 4:00pm worker ${row.id}:`, err);
         }
       }
     }
@@ -1736,7 +1766,7 @@ cron.schedule('0 16 * * 1,2,3,4,5,6', async () => {
 
 /**
  * GET /vapid-public-key
- * Retorna la clave pÃºblica VAPID como texto plano para uso en la llamada
+ * Retorna la clave pública VAPID como texto plano para uso en la llamada
  * PushManager.subscribe() del navegador.
  * @returns {string}
  */
