@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pkg from "pg";
-import { fileURLToPath } from "node:url";
 import bcrypt from "bcrypt";
 import webpush from "web-push";
 import cron from "node-cron";
@@ -134,8 +133,6 @@ const { Pool } = pkg;
 const app = express();
 const authConfig = createAuthConfig();
 const campaignsConfig = createCampaignsConfig();
-const campaignsPublicDirectory = fileURLToPath(new URL("./storage/campaigns", import.meta.url));
-
 
 const DB_POOL_MAX = Number(process.env.DB_POOL_MAX || 20);
 const DB_IDLE_TIMEOUT_MS = Number(process.env.DB_IDLE_TIMEOUT_MS || 30000);
@@ -191,7 +188,10 @@ app.use(cors({
 }));
 app.use(cookieParser());
 app.use(express.json());
-app.use(campaignsConfig.storage.renderDisk.publicPath, express.static(campaignsPublicDirectory));
+app.use(
+  campaignsConfig.storage.renderDisk.publicPath,
+  express.static(campaignsConfig.storage.renderDisk.directory)
+);
 app.use('/webauthn', webauthnRouter);
 app.use('/signio', signioRouter);
 app.use('/auth/pin', authPinRouter);
@@ -1773,3 +1773,4 @@ cron.schedule('0 16 * * 1,2,3,4,5,6', async () => {
 app.get('/vapid-public-key', (req, res) => {
   res.type('text/plain').send(process.env.VAPID_PUBLIC_KEY);
 });
+
