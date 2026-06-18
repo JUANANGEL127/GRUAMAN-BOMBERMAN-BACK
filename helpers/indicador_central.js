@@ -3,8 +3,10 @@ import { DateTime } from 'luxon';
 import { formatDateOnly, parseDateLocal, todayDateString } from './dateUtils.js';
 import { generateIndicadorCentralWorkbookBuffer } from './indicador_central_excel.js';
 import { renderComparativoIngresoChart } from './indicador_central_excel_chart.js';
+import { isColombianHoliday } from './colombian_holidays.js';
 
 export const INDICADOR_CENTRAL_TIMEZONE = 'America/Bogota';
+const INDICADOR_CENTRAL_TODAY_EXPR = "((NOW() AT TIME ZONE 'America/Bogota')::date)";
 
 const FORM_TABLE_META = {
   chequeo_alturas: { tabla: 'chequeo_alturas', campoNombre: 'nombre_operador', campoFecha: 'fecha_servicio' },
@@ -160,6 +162,87 @@ export function resolveFechaCorteDiario(now = DateTime.now().setZone(INDICADOR_C
   return now.startOf('day').minus({ days: 1 }).toISODate();
 }
 
+export function resolveIndicadorCentralTemporalCutoff(fechaCorte, now = DateTime.now().setZone(INDICADOR_CENTRAL_TIMEZONE)) {
+  return formatDateOnly(fechaCorte) || resolveFechaCorteDiario(now);
+}
+
+export function resolveIndicadorCentralMonthlyCronCutoff(now = DateTime.now().setZone(INDICADOR_CENTRAL_TIMEZONE)) {
+  const normalizedNow = now instanceof DateTime ? now : DateTime.fromJSDate(now, { zone: INDICADOR_CENTRAL_TIMEZONE });
+  return normalizedNow.minus({ days: 1 }).toISODate();
+}
+
+export function isIndicadorCentralWorkingDay(fecha) {
+  const normalized = formatDateOnly(fecha);
+  if (!normalized) {
+    return false;
+  }
+  return DateTime.fromISO(normalized, { zone: INDICADOR_CENTRAL_TIMEZONE }).weekday !== 7;
+}
+
+export function isIndicadorCentralHoliday(fecha) {
+  const normalized = formatDateOnly(fecha);
+  if (!normalized) {
+    return false;
+  }
+  return isColombianHoliday(normalized);
+}
+
+export function shouldIncludeIndicadorCentralMonthlyDay({
+  fecha,
+  hasTemporalNovelty = false,
+  hasRecords = false
+} = {}) {
+  const normalized = formatDateOnly(fecha);
+  if (!normalized) {
+    return false;
+  }
+
+  const date = DateTime.fromISO(normalized, { zone: INDICADOR_CENTRAL_TIMEZONE });
+  if (date.weekday === 7) {
+    return false;
+  }
+  if (hasTemporalNovelty) {
+    return false;
+  }
+  if (isIndicadorCentralHoliday(normalized) && !hasRecords) {
+    return false;
+  }
+  return true;
+}
+
+export function buildIndicadorCentralMonthlyDateRange(fechaCorte) {
+  const cutoffDate = resolveIndicadorCentralTemporalCutoff(fechaCorte);
+  const cutoff = DateTime.fromISO(cutoffDate, { zone: INDICADOR_CENTRAL_TIMEZONE });
+  const start = cutoff.startOf('month');
+  const fechas = [];
+
+  for (let current = start; current <= cutoff; current = current.plus({ days: 1 })) {
+    fechas.push(current.toISODate());
+  }
+
+  return fechas;
+}
+
+export function buildIndicadorCentralMonthlyWorkingDays(fechaCorte) {
+  return buildIndicadorCentralMonthlyDateRange(fechaCorte).filter((fecha) => isIndicadorCentralWorkingDay(fecha));
+}
+
+export function buildIndicadorCentralWorkerTemporalExclusionClause(fechaCorte, parameterIndex = 1) {
+  const cutoffDate = resolveIndicadorCentralTemporalCutoff(fechaCorte);
+  return {
+    cutoffDate,
+    sql: `NOT EXISTS (
+    SELECT 1
+      FROM trabajador_estado_temporal tet
+     WHERE tet.trabajador_id = t.id
+       AND tet.fecha_inicio <= $${parameterIndex}::date
+       AND COALESCE(tet.fecha_fin, 'infinity'::date) >= $${parameterIndex}::date
+       AND tet.cerrado_at IS NULL
+       AND tet.anulado_at IS NULL
+  )`
+  };
+}
+
 function isMonthlyUniqueCutoff(corteTipo = 'diario') {
   return corteTipo === 'mensual' || corteTipo === 'mensual_acumulado';
 }
@@ -170,13 +253,13 @@ function resolveRangeForCutoff({ corteTipo = 'diario', fechaCorte }) {
     if (!normalized) {
       throw new Error('Para corte mensual debés enviar fecha_corte');
     }
-    const end = DateTime.fromISO(normalized, { zone: INDICADOR_CENTRAL_TIMEZONE }).endOf('month').toISODate();
-    const start = DateTime.fromISO(normalized, { zone: INDICADOR_CENTRAL_TIMEZONE }).startOf('month').toISODate();
+    const end = resolveIndicadorCentralTemporalCutoff(normalized);
+    const start = DateTime.fromISO(end, { zone: INDICADOR_CENTRAL_TIMEZONE }).startOf('month').toISODate();
     return { fechaDesde: start, fechaHasta: end, fechaCorte: end };
   }
 
   if (corteTipo === 'mensual_acumulado') {
-    const fechaEfectiva = normalized || resolveFechaCorteDiario();
+    const fechaEfectiva = resolveIndicadorCentralTemporalCutoff(normalized);
     const start = DateTime.fromISO(fechaEfectiva, { zone: INDICADOR_CENTRAL_TIMEZONE }).startOf('month').toISODate();
     return {
       fechaDesde: start,
@@ -294,7 +377,7 @@ function shouldApplyObraFilter(scope) {
   return scope.empresa_ids.length === 0;
 }
 
-async function getWorkersByScope(db, config) {
+async function getWorkersByScope(db, config, temporalCutoffDate = null) {
   const values = [];
   const clauses = ['COALESCE(t.activo, true) = true'];
   const scope = await resolveWorkerScope(db, config.scope);
@@ -321,6 +404,10 @@ async function getWorkersByScope(db, config) {
     clauses.push(`LOWER(TRIM(t.nombre)) <> ALL($${values.length}::text[])`);
   }
 
+  const temporalCutoff = resolveIndicadorCentralTemporalCutoff(temporalCutoffDate);
+  values.push(temporalCutoff);
+  clauses.push(buildIndicadorCentralWorkerTemporalExclusionClause(temporalCutoff, values.length).sql);
+
   const result = await db.query(
     `SELECT t.id,
             t.nombre,
@@ -338,6 +425,61 @@ async function getWorkersByScope(db, config) {
   );
 
   return result.rows;
+}
+
+function buildTemporalNoveltyRangeMap(rows = []) {
+  return rows.reduce((acc, row) => {
+    const workerId = Number(row.trabajador_id || 0);
+    if (!Number.isInteger(workerId) || workerId <= 0) {
+      return acc;
+    }
+    if (!acc.has(workerId)) {
+      acc.set(workerId, []);
+    }
+    acc.get(workerId).push({
+      fecha_inicio: formatDateOnly(row.fecha_inicio),
+      fecha_fin: formatDateOnly(row.fecha_fin) || null
+    });
+    return acc;
+  }, new Map());
+}
+
+function isDateWithinTemporalRanges(fecha, ranges = []) {
+  const normalized = formatDateOnly(fecha);
+  if (!normalized || !Array.isArray(ranges) || ranges.length === 0) {
+    return false;
+  }
+
+  return ranges.some((range) => {
+    if (!range?.fecha_inicio) {
+      return false;
+    }
+    const start = DateTime.fromISO(range.fecha_inicio, { zone: INDICADOR_CENTRAL_TIMEZONE });
+    const end = DateTime.fromISO(range.fecha_fin || '9999-12-31', { zone: INDICADOR_CENTRAL_TIMEZONE });
+    const current = DateTime.fromISO(normalized, { zone: INDICADOR_CENTRAL_TIMEZONE });
+    return current.toMillis() >= start.toMillis() && current.toMillis() <= end.toMillis();
+  });
+}
+
+async function getTemporalNoveltyRangeMapByWorkerIds(db, workerIds = [], fechaDesde, fechaHasta) {
+  const uniqueWorkerIds = [...new Set((workerIds || []).map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
+  if (uniqueWorkerIds.length === 0) {
+    return new Map();
+  }
+
+  const result = await db.query(
+    `SELECT trabajador_id, fecha_inicio, fecha_fin
+       FROM trabajador_estado_temporal
+      WHERE trabajador_id = ANY($1::int[])
+        AND cerrado_at IS NULL
+        AND anulado_at IS NULL
+        AND fecha_inicio <= $3::date
+        AND COALESCE(fecha_fin, 'infinity'::date) >= $2::date
+   ORDER BY trabajador_id, fecha_inicio ASC, id ASC`,
+    [uniqueWorkerIds, fechaDesde, fechaHasta]
+  );
+
+  return buildTemporalNoveltyRangeMap(result.rows);
 }
 
 function buildAggregatedMap(aggregatedRows) {
@@ -749,8 +891,13 @@ export async function buildIndicadorCentralDataset({
 }) {
   const resolvedDb = getDb(db);
   const runtimeConfig = normalizeIndicadorCentralConfig(configuracion || (await getActiveIndicadorCentralConfig(resolvedDb)) || getIndicadorCentralDefaultConfig());
-  const workers = await getWorkersByScope(resolvedDb, runtimeConfig);
-  const fechas = buildDateRange(fechaDesde, fechaHasta);
+  const workers = await getWorkersByScope(resolvedDb, runtimeConfig, fechaCorte || fechaHasta);
+  const fechas = isMonthlyUniqueCutoff(corteTipo)
+    ? buildIndicadorCentralMonthlyWorkingDays(fechaCorte || fechaHasta)
+    : buildDateRange(fechaDesde, fechaHasta);
+  const temporalNoveltyRangesByWorkerId = isMonthlyUniqueCutoff(corteTipo)
+    ? await getTemporalNoveltyRangeMapByWorkerIds(resolvedDb, workers.map((worker) => worker.id), fechaDesde, fechaHasta)
+    : new Map();
   const empresasMap = await getEmpresasMap(resolvedDb, workers.map((worker) => worker.empresa_id));
   const rows = [];
 
@@ -788,6 +935,15 @@ export async function buildIndicadorCentralDataset({
         const key = `${String(worker.nombre).trim().toLowerCase()}_${fecha}`;
         const aggregated = aggregatedMap.get(key) || { total_registros: 0, nombre_proyecto: worker.nombre_obra || '', formatos_llenos: [] };
         const formatosLlenos = [...new Set((aggregated.formatos_llenos || []).map(String))];
+        const hasRecords = Number(aggregated.total_registros || 0) > 0 || formatosLlenos.length > 0;
+        const hasTemporalNovelty = isDateWithinTemporalRanges(fecha, temporalNoveltyRangesByWorkerId.get(Number(worker.id || 0)));
+        if (isMonthlyUniqueCutoff(corteTipo) && !shouldIncludeIndicadorCentralMonthlyDay({
+          fecha,
+          hasTemporalNovelty,
+          hasRecords
+        })) {
+          continue;
+        }
         const formatosFaltantes = expectedFormatos.filter((tabla) => !formatosLlenos.includes(tabla));
         const formatosOperativosLlenos = expectedOperationalFormatos.filter((tabla) => formatosLlenos.includes(tabla));
         const formatosOperativosFaltantes = expectedOperationalFormatos.filter((tabla) => !formatosLlenos.includes(tabla));
@@ -1084,5 +1240,19 @@ export async function runIndicadorCentralCutoff({
     );
     throw error;
   }
+}
+
+export async function runIndicadorCentralMonthlyCronJob({
+  now = DateTime.now().setZone(INDICADOR_CENTRAL_TIMEZONE),
+  db,
+  runIndicadorCentralCutoff: runIndicadorCentralCutoffFn = runIndicadorCentralCutoff
+} = {}) {
+  return runIndicadorCentralCutoffFn({
+    fechaCorte: resolveIndicadorCentralMonthlyCronCutoff(now),
+    corteTipo: 'mensual_acumulado',
+    origen: 'cron',
+    canal: 'email',
+    db
+  });
 }
 

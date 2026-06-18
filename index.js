@@ -43,7 +43,8 @@ import authPinRouter, { configureAuthPinSession } from './routes/auth_pin.js';
 import pqrRouter from './routes/sst/pqr.js';
 import empresaRouter from './routes/empresa/empresa.js'
 import formatosObligatoriosRouter from "./routes/formatos_obligatorios.js";
-import { getIndicadorCentralDefaultConfig, runIndicadorCentralCutoff } from './helpers/indicador_central.js';
+import { getIndicadorCentralDefaultConfig, runIndicadorCentralCutoff, runIndicadorCentralMonthlyCronJob } from './helpers/indicador_central.js';
+import { buildTemporalNoveltyBootstrapStatements } from './helpers/temporal_novelty_bootstrap.js';
 import { createAuthConfig, isLocalhostOrigin } from "./config/authConfig.js";
 import { createAuthSessionController } from "./controllers/authSessionController.js";
 import { createAuthSessionRouter } from "./routes/auth_session.js";
@@ -326,6 +327,11 @@ app.use('/auth', createAuthSessionRouter({ authSessionController, csrfProtection
   await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS pin_hash VARCHAR(100)`).catch(() => {});
   await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT true`).catch(() => {});
   await pool.query(`ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS cargo VARCHAR(100)`).catch(() => {});
+
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS btree_gist`).catch(() => {});
+  for (const statement of buildTemporalNoveltyBootstrapStatements()) {
+    await pool.query(statement).catch(() => {});
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS horas_jornada (
@@ -1577,12 +1583,7 @@ cron.schedule('0 0 * * 0,2,3,4,5,6', async () => {
 cron.schedule('0 1 1 * *', async () => {
   await ejecutarConLock('indicador_central_mensual_acumulado_01', async () => {
     try {
-      await runIndicadorCentralCutoff({
-        corteTipo: 'mensual_acumulado',
-        origen: 'cron',
-        canal: 'email',
-        db: pool
-      });
+      await runIndicadorCentralMonthlyCronJob({ db: pool });
     } catch (err) {
       console.error('Error ejecutando indicador central mensual acumulado:', err.message);
     }
