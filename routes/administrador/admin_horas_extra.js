@@ -1947,6 +1947,19 @@ function createReportJobRequest(req, formato = 'pdf') {
   };
 }
 
+function resolveReportLimit(rawLimit, fallbackMax = 50000) {
+  if (rawLimit === undefined || rawLimit === null || String(rawLimit).trim() === '') {
+    return null;
+  }
+
+  const parsedLimit = Number.parseInt(rawLimit, 10);
+  if (!Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+    return null;
+  }
+
+  return Math.min(fallbackMax, parsedLimit);
+}
+
 async function processHorasExtraReportJob(jobId, req, formato = 'pdf') {
   const job = getReportJob(jobId);
   if (!job) return;
@@ -2732,7 +2745,7 @@ async function handleDescargar(req, res) {
     const pool = db;
     const reportProfile = resolveAdminHorasExtraProfile(req);
     const profileConfig = getReportProfileConfig(reportProfile);
-    const { nombre, obra, constructora, empresa_id, empresa_ids, fecha_inicio, fecha_fin, formato = 'excel', limit = 50000 } = req.body || {};
+    const { nombre, obra, constructora, empresa_id, empresa_ids, fecha_inicio, fecha_fin, formato = 'excel', limit } = req.body || {};
     const downloadMode = String(req.body?.modo || req.body?.mode || req.body?.async || '').trim().toLowerCase();
     if (['pdf', 'excel'].includes(formato) && ['job', 'async', 'background', 'as_job', 'true', '1'].includes(downloadMode)) {
       return handleStartHorasExtraReportJob(req, res);
@@ -2761,12 +2774,12 @@ async function handleDescargar(req, res) {
     if (end) { clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`); values.push(end); }
 
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-    const downloadLimit = formato === 'pdf'
-      ? 50000
-      : Math.min(50000, parseInt(limit,10)||50000);
+    const downloadLimit = resolveReportLimit(limit);
+    const limitClause = downloadLimit ? ` LIMIT $${values.length + 1}` : '';
+    const queryValues = downloadLimit ? [...values, downloadLimit] : values;
     const q = await pool.query(
-      `SELECT * FROM horas_jornada ${where} ORDER BY fecha_servicio DESC LIMIT $${values.length+1}`,
-      [...values, downloadLimit]
+      `SELECT * FROM horas_jornada ${where} ORDER BY fecha_servicio DESC${limitClause}`,
+      queryValues
     );
 
     const sedeMap = await buildSedeMap(pool);
@@ -3201,7 +3214,7 @@ async function handleStartHorasExtraReportJob(req, res) {
     const requestedFormat = String(req.body?.formato || 'pdf').trim().toLowerCase();
     const formato = requestedFormat === 'excel' ? 'excel' : 'pdf';
     const job = createReportJobRecord({ format: formato });
-    const { nombre, obra, constructora, empresa_id, empresa_ids, fecha_inicio, fecha_fin, limit = 50000 } = req.body || {};
+    const { nombre, obra, constructora, empresa_id, empresa_ids, fecha_inicio, fecha_fin, limit } = req.body || {};
     const start = formatDateOnly(fecha_inicio);
     const end = formatDateOnly(fecha_fin) || todayDateString();
 
@@ -3226,9 +3239,12 @@ async function handleStartHorasExtraReportJob(req, res) {
     if (end) { clauses.push(`CAST(fecha_servicio AS date) <= $${idx++}`); values.push(end); }
 
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const jobLimit = resolveReportLimit(limit);
+    const limitClause = jobLimit ? ` LIMIT $${values.length + 1}` : '';
+    const queryValues = jobLimit ? [...values, jobLimit] : values;
     const q = await pool.query(
-      `SELECT * FROM horas_jornada ${where} ORDER BY fecha_servicio DESC LIMIT $${values.length+1}`,
-      [...values, Math.min(50000, parseInt(limit, 10) || 50000)]
+      `SELECT * FROM horas_jornada ${where} ORDER BY fecha_servicio DESC${limitClause}`,
+      queryValues
     );
 
     updateReportJob(job.jobId, {

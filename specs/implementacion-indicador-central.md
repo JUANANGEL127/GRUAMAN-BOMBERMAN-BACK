@@ -314,6 +314,7 @@ El helper de Excel quedó alineado con el dataset derivado del backend y ya no d
 - `SMTP_PASS`
 - `SMTP_FROM`
 - `INDICADOR_CENTRAL_DESTINATARIOS` (opcional, semilla inicial)
+- `INDICADOR_CENTRAL_REPORT_TITLE` (opcional, sobreescribe el título usado en el correo y el HTML; si no existe, se usa `Indicador de adaptación app La Central`)
 
 ## 9. Checklist de validación manual
 

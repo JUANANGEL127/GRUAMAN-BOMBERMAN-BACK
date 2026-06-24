@@ -7,6 +7,7 @@ import { isColombianHoliday } from './colombian_holidays.js';
 
 export const INDICADOR_CENTRAL_TIMEZONE = 'America/Bogota';
 const INDICADOR_CENTRAL_TODAY_EXPR = "((NOW() AT TIME ZONE 'America/Bogota')::date)";
+const DEFAULT_INDICADOR_CENTRAL_REPORT_TITLE = 'Indicador de adaptación app La Central';
 
 const FORM_TABLE_META = {
   chequeo_alturas: { tabla: 'chequeo_alturas', campoNombre: 'nombre_operador', campoFecha: 'fecha_servicio' },
@@ -106,6 +107,11 @@ export function getIndicadorCentralDefaultConfig() {
       nombres: []
     }
   };
+}
+
+export function getIndicadorCentralReportTitle(env = process.env) {
+  return String(env.INDICADOR_CENTRAL_REPORT_TITLE || DEFAULT_INDICADOR_CENTRAL_REPORT_TITLE).trim()
+    || DEFAULT_INDICADOR_CENTRAL_REPORT_TITLE;
 }
 
 export function normalizeIndicadorCentralConfig(config = {}) {
@@ -1023,7 +1029,14 @@ function buildEmailComparativoBlocks(comparativoVisual = {}) {
     `).join('');
 }
 
-function buildEmailHtml({ fechaCorte, corteTipo, resumen, comparativoVisual, chartCid = null }) {
+function buildEmailHtml({
+  fechaCorte,
+  corteTipo,
+  resumen,
+  comparativoVisual,
+  chartCid = null,
+  reportTitle = DEFAULT_INDICADOR_CENTRAL_REPORT_TITLE
+}) {
   const useUniqueLabels = isMonthlyUniqueCutoff(corteTipo);
   const labels = useUniqueLabels
     ? {
@@ -1056,7 +1069,7 @@ function buildEmailHtml({ fechaCorte, corteTipo, resumen, comparativoVisual, cha
     : '';
 
   return `
-    <h2>Indicador de adaptación app La Central</h2>
+    <h2>${reportTitle}</h2>
     <p><strong>Corte:</strong> ${fechaCorte}</p>
     <p><strong>Tipo:</strong> ${corteTipo}</p>
     <p><strong>Granularidad resumen:</strong> ${resumen.granularidad_resumen ?? 'persona_dia'}</p>
@@ -1077,6 +1090,7 @@ function buildEmailHtml({ fechaCorte, corteTipo, resumen, comparativoVisual, cha
 }
 
 async function sendIndicadorCentralEmail({ destinatarios, workbookBuffer, fechaCorte, corteTipo, resumen, comparativoVisual }) {
+  const reportTitle = getIndicadorCentralReportTitle();
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465,
@@ -1097,9 +1111,9 @@ async function sendIndicadorCentralEmail({ destinatarios, workbookBuffer, fechaC
   await transporter.sendMail({
     from: process.env.SMTP_FROM,
     to: destinatarios.join(', '),
-    subject: `Indicador de adaptación app La Central | corte ${fechaCorte}`,
-    text: `Indicador de adaptación de La Central para el corte ${fechaCorte}. Operarios evaluados: ${resumen.total_operarios ?? 0}.`,
-    html: buildEmailHtml({ fechaCorte, corteTipo, resumen, comparativoVisual, chartCid }),
+    subject: `${reportTitle} | corte ${fechaCorte}`,
+    text: `${reportTitle} para el corte ${fechaCorte}. Operarios evaluados: ${resumen.total_operarios ?? 0}.`,
+    html: buildEmailHtml({ fechaCorte, corteTipo, resumen, comparativoVisual, chartCid, reportTitle }),
     attachments: [
       {
         filename: attachmentName,
